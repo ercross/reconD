@@ -5,10 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -92,34 +89,20 @@ func Load(path string) (*Config, error) {
 
 func parseConfig(path string, raw []byte) (*Config, error) {
 	var cfg Config
-	switch filepath.Ext(path) {
-	case ".yaml", ".yml":
-		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+	}
+	if len(cfg.Workloads) == 0 {
+		var workload Workload
+		if err := json.Unmarshal(raw, &workload); err != nil {
 			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
 		}
-		if len(cfg.Workloads) == 0 {
-			var workload Workload
-			if err := yaml.Unmarshal(raw, &workload); err != nil {
-				return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
-			}
-			if workload.Name != "" {
-				cfg.Workloads = []Workload{workload}
-			}
-		}
-	default:
-		if err := json.Unmarshal(raw, &cfg); err != nil {
-			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
-		}
-		if len(cfg.Workloads) == 0 {
-			var workload Workload
-			if err := json.Unmarshal(raw, &workload); err != nil {
-				return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
-			}
-			if workload.Name != "" {
-				cfg.Workloads = []Workload{workload}
-			}
+		if workload.Name != "" {
+			cfg.Workloads = []Workload{workload}
 		}
 	}
+
 	return &cfg, nil
 }
 
@@ -226,13 +209,6 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	}
 	d.Duration = time.Duration(seconds) * time.Second
 	return nil
-}
-
-func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
-	if value.Kind != yaml.ScalarNode {
-		return fmt.Errorf("duration must be a scalar")
-	}
-	return d.setString(value.Value)
 }
 
 func (d *Duration) setString(value string) error {
