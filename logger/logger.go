@@ -76,6 +76,7 @@ const (
 	PhasePoll        = "poll"
 	PhaseDrift       = "drift_check"
 	PhasePull        = "image_pull"
+	PhaseStrategy    = "deployment_strategy"
 	PhaseMigration   = "migration"
 	PhaseRestart     = "restart"
 	PhaseHealthCheck = "health_check"

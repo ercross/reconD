@@ -1,8 +1,8 @@
-// Package state manages persistent deployment state for each environment.
+// Package state manages persistent deployment state for each workload.
 // State is stored as JSON files on disk, making it inspectable by operators
 // and safe across agent restarts.
 //
-// File layout per environment:
+// File layout per workload:
 //
 //	{state_dir}/deployed.json  — the currently active deployment
 //	{state_dir}/previous.json  — the deployment before the last successful one
@@ -25,14 +25,11 @@ type Manager interface {
 
 var ErrFileNotFound = errors.New("file not found")
 
-// DeploymentState represents a point-in-time snapshot of what is deployed
-// in a given environment.
+// DeploymentState represents a point-in-time snapshot of what is deployed.
 type DeploymentState struct {
-	// Environment is the name of the environment (e.g. "production").
-	Environment string `json:"environment"`
+	Workload string `json:"workload"`
 
-	// ServiceName is the docker compose service this state belongs to.
-	ServiceName string `json:"service_name,omitempty"`
+	Environment string `json:"environment,omitempty"`
 
 	// Image is the full image reference that is deployed.
 	Image string `json:"image"`

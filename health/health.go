@@ -8,7 +8,9 @@ package health
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -52,7 +54,7 @@ func (c *Checker) Check(ctx context.Context) error {
 	return nil
 }
 
-// WaitHealthy polls the health endpoint until it returns HTTP 200
+// WaitHealthy polls the health endpoint until it is healthy
 // or the retry budget is exhausted.
 //
 // Parameters:
@@ -61,15 +63,13 @@ func (c *Checker) Check(ctx context.Context) error {
 //   - timeout: per-request HTTP timeout
 //
 // Returns nil on success, error after all retries fail.
-func WaitHealthy(ctx context.Context, url string, retries int, interval, timeout time.Duration) error {
-	checker := NewChecker(url, timeout)
-
+func WaitHealthy(ctx context.Context, checkType, rawURL string, retries int, interval, timeout time.Duration) error {
 	for attempt := 1; attempt <= retries; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("context cancelled: %w", err)
 		}
 
-		err := checker.Check(ctx)
+		err := check(ctx, checkType, rawURL, timeout)
 		if err == nil {
 			return nil // healthy
 		}
@@ -87,4 +87,28 @@ func WaitHealthy(ctx context.Context, url string, retries int, interval, timeout
 	}
 
 	return fmt.Errorf("no attempts made")
+}
+
+func check(ctx context.Context, checkType, rawURL string, timeout time.Duration) error {
+	switch checkType {
+	case "", "http":
+		return NewChecker(rawURL, timeout).Check(ctx)
+	case "tcp":
+		parsed, err := url.Parse(rawURL)
+		if err != nil {
+			return fmt.Errorf("parse tcp health check URL: %w", err)
+		}
+		if parsed.Host == "" {
+			return fmt.Errorf("tcp health check URL must include host and port")
+		}
+		dialer := net.Dialer{Timeout: timeout}
+		conn, err := dialer.DialContext(ctx, "tcp", parsed.Host)
+		if err != nil {
+			return fmt.Errorf("tcp health check %s: %w", rawURL, err)
+		}
+		_ = conn.Close()
+		return nil
+	default:
+		return fmt.Errorf("unsupported health check type %q", checkType)
+	}
 }

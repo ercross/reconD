@@ -16,9 +16,6 @@ type DeploymentMetadata struct {
 	// Environment is the target environment name (e.g. "dev", "production").
 	Environment string `json:"environment"`
 
-	// ServiceName is the docker compose service this metadata applies to.
-	ServiceName string `json:"service_name,omitempty"`
-
 	// Image is the full image reference including tag.
 	Image string `json:"image"`
 
@@ -37,5 +34,5 @@ type DeploymentMetadata struct {
 }
 
 type GitProvider interface {
-	FetchLatestForEnvironment(ctx context.Context, releasePrefix, environment string) (meta DeploymentMetadata, err error)
+	FetchLatestDeploymentMetadata(ctx context.Context, environment string) (meta DeploymentMetadata, err error)
 }

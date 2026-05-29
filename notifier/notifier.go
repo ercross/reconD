@@ -13,3 +13,9 @@ type Notifier interface {
 	NotifyOnDeploymentFailed(meta git_provider.DeploymentMetadata, err error)
 	NotifyOnDeploymentSuccess(dep state.DeploymentState)
 }
+
+type Noop struct{}
+
+func (Noop) NotifyOnNewDeploymentStarted(meta git_provider.DeploymentMetadata)        {}
+func (Noop) NotifyOnDeploymentFailed(meta git_provider.DeploymentMetadata, err error) {}
+func (Noop) NotifyOnDeploymentSuccess(dep state.DeploymentState)                      {}

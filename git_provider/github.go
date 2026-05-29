@@ -61,17 +61,16 @@ func NewGithubClient(owner, repo, token string) (GitProvider, error) {
 	}, nil
 }
 
-// FetchLatestForEnvironment retrieves the most recent release whose tag
-// starts with releasePrefix and contains a deployment-metadata.json asset
-// matching the given environment.
-func (c *githubClient) FetchLatestForEnvironment(ctx context.Context, releasePrefix, environment string) (meta DeploymentMetadata, err error) {
+// FetchLatestDeploymentMetadata retrieves the most recent image release for
+// environment and unmarshals its deployment-metadata.json artifact.
+func (c *githubClient) FetchLatestDeploymentMetadata(ctx context.Context, environment string) (meta DeploymentMetadata, err error) {
 	releases, err := c.listReleases(ctx)
 	if err != nil {
 		return meta, fmt.Errorf("list releases: %w", err)
 	}
 
 	for _, r := range releases {
-		if !strings.HasPrefix(r.GetTagName(), releasePrefix) {
+		if !strings.HasPrefix(r.GetTagName(), environment) {
 			continue
 		}
 

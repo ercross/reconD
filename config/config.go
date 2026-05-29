@@ -5,59 +5,71 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Services []Service `json:"services"`
+	Workloads []Workload `json:"workloads" yaml:"workloads"`
 }
 
-type Service struct {
-	// Labels baked into the image via Dockerfile
-	Labels map[string]string `json:"labels" validate:"required,min=1"`
+type Workload struct {
+	Name            string            `json:"name" yaml:"name"`
+	Environment     string            `json:"environment" yaml:"environment"`
+	ContainerName   string            `json:"container_name" yaml:"container_name"`
+	NotificationURL string            `json:"notification_url" yaml:"notification_url"`
+	DeployCommand   string            `json:"deploy_command" yaml:"deploy_command"`
+	CheckInterval   Duration          `json:"check_interval" yaml:"check_interval"`
+	StateDir        string            `json:"state_dir" yaml:"state_dir"`
+	GitProvider     GitProvider       `json:"git_provider" yaml:"git_provider"`
+	HealthCheck     HealthCheckConfig `json:"health_check" yaml:"health_check"`
+	Strategy        StrategyConfig    `json:"strategy" yaml:"strategy"`
 
-	// Name of this service as written in the docker compose configuration
-	Name            string        `json:"name"`
-	Environment     string        `json:"environment"`
-	ContainerName   string        `json:"container_name"`
-	NotificationUrl string        `json:"notification_url"`
-	Reconciler      *Reconciler   `json:"reconciler"`
-	Orchestration   Orchestration `json:"orchestration"`
-}
-
-type Orchestration struct {
-	StartCommand string `json:"start"`
-	StopCommand  string `json:"stop"`
-}
-
-type Reconciler struct {
-	// PollIntervalInSeconds controls how frequently each environment reconciler checks
-	// for new deployment metadata. Default: 60.
-	PollIntervalInSeconds int64             `json:"poll_interval_in_seconds"`
-	GitProvider           GitProvider       `json:"git_provider"`
-	ReleasePrefix         string            `json:"release_prefix"`
-	StateDir              string            `json:"state_dir"`
-	HealthCheckURL        string            `json:"health_check_url"`
-	HealthCheck           HealthCheckConfig `json:"health_check"`
+	// Labels optionally scope docker image pruning to this workload's images.
+	Labels map[string]string `json:"labels" yaml:"labels"`
 }
 
 type GitProvider struct {
-	Owner string `json:"owner"`
-	Repo  string `json:"repo"`
+	Owner string `json:"owner" yaml:"owner"`
+	Repo  string `json:"repo" yaml:"repo"`
 	// Token is optional; set via GITHUB_TOKEN env var for private repos.
-	// If empty, unauthenticated requests are used (60 req/hr limit applies).
-	Token string `json:"token"`
+	Token string `json:"token" yaml:"token"`
 }
 
+type StrategyConfig struct {
+	Type        StrategyType `json:"type" yaml:"type"`
+	EnvFilePath string       `json:"env_file_path" yaml:"env_file_path"`
+	ImageTagKey string       `json:"image_tag_key" yaml:"image_tag_key"`
+}
+
+type StrategyType string
+
+const (
+	StrategyNone    StrategyType = "none"
+	StrategyEnvFile StrategyType = "env_file"
+)
+
 type HealthCheckConfig struct {
-	// MaxRetries is the number of health check attempts before declaring failure.
-	MaxRetries int `json:"retries"`
+	Type     HealthCheckType `json:"type" yaml:"type"`
+	URL      string          `json:"url" yaml:"url"`
+	Retries  int             `json:"retries" yaml:"retries"`
+	Interval Duration        `json:"interval" yaml:"interval"`
+	Timeout  Duration        `json:"timeout" yaml:"timeout"`
+}
 
-	// Interval is the wait between retries.
-	Interval time.Duration
+type HealthCheckType string
 
-	// Timeout is the per-request HTTP timeout.
-	Timeout time.Duration
+const (
+	HealthCheckNone    HealthCheckType = "none"
+	HealthCheckHTTP    HealthCheckType = "http"
+	HealthCheckTCP     HealthCheckType = "tcp"
+	HealthCheckCommand HealthCheckType = "command"
+)
+
+type Duration struct {
+	time.Duration
 }
 
 func Load(path string) (*Config, error) {
@@ -66,94 +78,168 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("error reading config file %q: %w", path, err)
 	}
 
-	var cfg Config
-	if err = json.Unmarshal(raw, &cfg); err != nil {
-		return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+	cfg, err := parseConfig(path, raw)
+	if err != nil {
+		return nil, err
 	}
 
-	for i := range cfg.Services {
-		cfg.Services[i].fillDefaultOnZeroValues()
+	for i := range cfg.Workloads {
+		cfg.Workloads[i].fillDefaultOnZeroValues()
 	}
 
-	return &cfg, cfg.validate()
+	return cfg, cfg.validate()
 }
 
-func (s *Service) fillDefaultOnZeroValues() {
+func parseConfig(path string, raw []byte) (*Config, error) {
+	var cfg Config
+	switch filepath.Ext(path) {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+		}
+		if len(cfg.Workloads) == 0 {
+			var workload Workload
+			if err := yaml.Unmarshal(raw, &workload); err != nil {
+				return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+			}
+			if workload.Name != "" {
+				cfg.Workloads = []Workload{workload}
+			}
+		}
+	default:
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+		}
+		if len(cfg.Workloads) == 0 {
+			var workload Workload
+			if err := json.Unmarshal(raw, &workload); err != nil {
+				return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
+			}
+			if workload.Name != "" {
+				cfg.Workloads = []Workload{workload}
+			}
+		}
+	}
+	return &cfg, nil
+}
 
-	if s.Reconciler.PollIntervalInSeconds < 10 {
-		s.Reconciler.PollIntervalInSeconds = 60
+func (w *Workload) fillDefaultOnZeroValues() {
+	if w.CheckInterval.Duration < 10*time.Second {
+		w.CheckInterval.Duration = 60 * time.Second
 	}
-	if s.Reconciler.HealthCheck.MaxRetries == 0 {
-		s.Reconciler.HealthCheck.MaxRetries = 12
+	if w.HealthCheck.Retries == 0 {
+		w.HealthCheck.Retries = 12
 	}
-	if s.Reconciler.HealthCheck.Interval == 0 {
-		s.Reconciler.HealthCheck.Interval = 10 * time.Second
+	if w.HealthCheck.Interval.Duration == 0 {
+		w.HealthCheck.Interval.Duration = 10 * time.Second
 	}
-	if s.Reconciler.HealthCheck.Timeout == 0 {
-		s.Reconciler.HealthCheck.Timeout = 5 * time.Second
+	if w.HealthCheck.Timeout.Duration == 0 {
+		w.HealthCheck.Timeout.Duration = 5 * time.Second
+	}
+	if w.Strategy.Type == StrategyEnvFile && w.Strategy.ImageTagKey == "" {
+		w.Strategy.ImageTagKey = "IMAGE_TAG"
 	}
 }
 
 func (cfg Config) validate() error {
-	if len(cfg.Services) == 0 {
-		return fmt.Errorf("at least one service must be configured")
+	if len(cfg.Workloads) == 0 {
+		return fmt.Errorf("at least one workload must be configured")
 	}
 
-	for i, service := range cfg.Services {
-		if err := service.validate(); err != nil {
-			return fmt.Errorf("service %d: %w", i, err)
+	for i, workload := range cfg.Workloads {
+		if err := workload.validate(); err != nil {
+			return fmt.Errorf("workload %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func (r Reconciler) validate() error {
-	if r.ReleasePrefix == "" {
-		return errors.New("release_prefix is required")
+func (w Workload) validate() error {
+	if w.Name == "" {
+		return errors.New("name is required")
 	}
-	if r.StateDir == "" {
+	if w.ContainerName == "" {
+		return errors.New("container_name is required")
+	}
+	if w.DeployCommand == "" {
+		return errors.New("deploy_command is required")
+	}
+	if w.StateDir == "" {
 		return errors.New("state_dir is required")
 	}
-	if r.HealthCheckURL == "" {
-		return errors.New("health_check_url is required")
+	if w.Environment == "" {
+		return errors.New("environment is required")
 	}
-	if r.GitProvider.Owner == "" {
+	if w.GitProvider.Owner == "" {
 		return errors.New("git_provider.owner is required")
 	}
-	if r.GitProvider.Repo == "" {
+	if w.GitProvider.Repo == "" {
 		return errors.New("git_provider.repo is required")
+	}
+	if err := w.HealthCheck.validate(); err != nil {
+		return err
+	}
+	return w.Strategy.validate()
+}
+
+func (h HealthCheckConfig) validate() error {
+	switch h.Type {
+	case "", HealthCheckNone:
+		return nil
+	case HealthCheckHTTP, HealthCheckTCP:
+		if h.URL == "" {
+			return errors.New("health_check.url is required")
+		}
+	case HealthCheckCommand:
+		return errors.New("health_check.type command is recognized but not implemented")
+	default:
+		return fmt.Errorf("unsupported health_check.type %q", h.Type)
 	}
 	return nil
 }
 
-func (s Service) validate() error {
-	if s.Name == "" {
-		return errors.New("service_name is required")
+func (s StrategyConfig) validate() error {
+	switch s.Type {
+	case "", StrategyNone:
+		return errors.New("strategy can not be empty")
+	case StrategyEnvFile:
+		if s.EnvFilePath == "" {
+			return errors.New("strategy.env_file_path is required for env_file strategy")
+		}
+		if s.ImageTagKey == "" {
+			return errors.New("strategy.image_tag_key is required for env_file strategy")
+		}
+	default:
+		return fmt.Errorf("unsupported strategy.type %q", s.Type)
 	}
+	return nil
+}
 
-	if s.Environment != "" {
-		return errors.New("image_prefix is required")
+func (d *Duration) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		return d.setString(s)
 	}
-
-	if s.ContainerName == "" {
-		return errors.New("container name is required")
+	var seconds int64
+	if err := json.Unmarshal(data, &seconds); err != nil {
+		return err
 	}
+	d.Duration = time.Duration(seconds) * time.Second
+	return nil
+}
 
-	if len(s.Labels) == 0 {
-		return errors.New("at least one image label is required")
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	if value.Kind != yaml.ScalarNode {
+		return fmt.Errorf("duration must be a scalar")
 	}
+	return d.setString(value.Value)
+}
 
-	if s.NotificationUrl == "" {
-		return errors.New("notification_url is required")
+func (d *Duration) setString(value string) error {
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("parse duration %q: %w", value, err)
 	}
-
-	if s.Orchestration.StartCommand == "" {
-		return errors.New("start command is required")
-	}
-
-	if s.Orchestration.StopCommand == "" {
-		return errors.New("stop command is required")
-	}
-
-	return s.Reconciler.validate()
+	d.Duration = parsed
+	return nil
 }

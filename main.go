@@ -1,35 +1,21 @@
-// Package main is the entry point for the deployment-manager.
-//
-// Startup sequence:
-//  1. Configure structured logging
-//  2. Load and validate configuration
-//  3. Construct shared dependencies (GitHub client)
-//  4. For each environment: construct state manager and reconciler
-//  5. Launch each reconciler in its own goroutine
-//  6. Block on SIGTERM/SIGINT for graceful shutdown
-//
-// Shutdown sequence:
-//  1. Cancel the root context
-//  2. All reconcilers detect cancellation and exit their loops
-//  3. Wait for all goroutines to finish
-//  4. Exit 0
-//
-// The agent is designed to be managed by systemd with Restart=on-failure.
-// It exits non-zero if configuration is invalid or state directories cannot
-// be created (operator action required), but recovers from transient errors
-// (network failures, Docker unavailable) via the reconcile loop's retry logic.
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/ercross/reconD/config"
+	"github.com/ercross/reconD/git_provider"
 	"github.com/ercross/reconD/logger"
+	"github.com/ercross/reconD/notifier"
+	"github.com/ercross/reconD/reconciler"
+	"github.com/ercross/reconD/state"
 )
 
 func main() {
@@ -40,38 +26,69 @@ func main() {
 }
 
 func run() error {
-	// --- Flags ---
-	configPath := flag.String("config", "missing config file", "path to agent config file")
+	configPath := flag.String("config", "", "path to agent config file")
 	flag.Parse()
 	if *configPath == "" {
 		return fmt.Errorf("missing config path")
 	}
 
-	// --- Logging ---
-	// Set up structured logging first so all subsequent errors are structured.
 	log := logger.Setup()
-	log.Info("Deployment manager starting", "config", *configPath)
+	log.Info("deployment agent starting", "config", *configPath)
 
-	// --- Configuration ---
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("load config error %q: %w", *configPath, err)
 	}
 
-	// --- Root context with signal cancellation ---
-	// The context is cancelled on SIGTERM or SIGINT, which propagates to all
-	// reconciler goroutines and their in-flight HTTP requests and exec calls.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	for service := range cfg.Services {
-		service := service
+	var wg sync.WaitGroup
+	for _, workload := range cfg.Workloads {
+		workload := workload
 
+		stateMgr, err := state.NewManagerWithLocalFileSystem(workload.StateDir)
+		if err != nil {
+			return fmt.Errorf("create state manager for workload %q: %w", workload.Name, err)
+		}
+
+		gp, err := gitProviderFor(workload)
+		if err != nil {
+			return fmt.Errorf("create git provider for workload %q: %w", workload.Name, err)
+		}
+
+		r := reconciler.New(
+			workload,
+			gp,
+			stateMgr,
+			notifierFor(workload, log),
+			log,
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.StartPeriodicReconciliation(ctx)
+		}()
 	}
-	manager := deployment_manager.New(cfg.Projects, log)
-	if err := manager.Start(ctx); err != nil {
-		return err
-	}
+
+	<-ctx.Done()
+	wg.Wait()
 	log.Info("agent shutdown complete")
 	return nil
+}
+
+func gitProviderFor(workload config.Workload) (git_provider.GitProvider, error) {
+	token := workload.GitProvider.Token
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+	}
+	return git_provider.NewGithubClient(workload.GitProvider.Owner, workload.GitProvider.Repo, token)
+}
+
+func notifierFor(workload config.Workload, log *slog.Logger) notifier.Notifier {
+	if workload.NotificationURL == "" {
+		return notifier.Noop{}
+	}
+	return notifier.NewSlackNotifier(workload.NotificationURL, log)
 }
