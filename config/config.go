@@ -113,6 +113,11 @@ func (w *Workload) fillDefaultOnZeroValues() {
 	if w.HealthCheck.Retries == 0 {
 		w.HealthCheck.Retries = 12
 	}
+
+	if w.GitProvider.Token == "" {
+		w.GitProvider.Token = os.Getenv("GITHUB_TOKEN")
+	}
+
 	if w.HealthCheck.Interval.Duration == 0 {
 		w.HealthCheck.Interval.Duration = 10 * time.Second
 	}
