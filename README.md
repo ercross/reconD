@@ -1,0 +1,280 @@
+# reconD
+
+`reconD` is a small deployment agent for single-host container workloads.
+
+It watches deployment metadata, compares the desired image digest with the
+host's observed state, and runs one configured deployment command when drift is
+found.
+
+The project is intentionally narrow: it is a reconciliation loop for workload
+image state. It is not a container orchestrator.
+
+## What It Does
+
+For each configured workload, `reconD` repeatedly:
+
+1. Fetches the latest `deployment-metadata.json` for an environment.
+2. Reads the currently committed deployment state from disk.
+3. Inspects the configured container to detect runtime drift.
+4. Pulls the desired image.
+5. Runs an optional deployment preparation strategy.
+6. Runs the configured `deploy_command`.
+7. Waits for the health check.
+8. Commits deployment state, or attempts rollback on failure.
+
+The desired state is the deployment metadata emitted alongside an image release.
+The container registry is not treated as the source of truth by itself.
+
+## Specific Use Case
+
+Use `reconD` when you already have:
+
+- CI that builds and publishes container images.
+- CI that publishes `deployment-metadata.json` alongside image releases.
+- A single host that should run one named workload at a desired image version.
+- A local command that knows how to deploy that workload on the host.
+
+The deploy command can be `docker run`, a shell script, a Make target, or a
+command that invokes Docker Compose. `reconD` does not understand or manage the
+topology behind that command.
+
+## Out Of Scope
+
+`reconD` does not manage:
+
+- Docker Compose projects.
+- Multi-container application topology.
+- Service dependencies.
+- Networking.
+- Volumes.
+- Secrets.
+- Ingress or traffic routing.
+- Load balancing.
+- Scaling.
+- Scheduling.
+- Clusters.
+- Infrastructure provisioning.
+
+If a feature requires understanding application topology, dependency ordering,
+networking, routing, or workload composition, it belongs outside the agent.
+
+## Deployment Metadata
+
+The Git provider implementation fetches and unmarshals `deployment-metadata.json`.
+The current GitHub implementation looks at image releases for the configured
+environment. In practice, the environment usually corresponds to the prefix used
+in image tags, such as `dev` or `prod`.
+
+Example metadata:
+
+```json
+{
+  "environment": "prod",
+  "image": "ghcr.io/my-account/app-repo",
+  "image_tag": "prod-sha-10a3e42",
+  "manifest_digest": "sha256:19779d908d890f704a2170d7dde679e266a9137613ea299b38939eb889545f8e",
+  "git_sha": "10a3e42cc477e9e6da84037474d45c8b1300e9f8",
+  "created_at": "2026-05-26T04:47:49Z"
+}
+```
+
+## Configuration
+
+`reconD` currently loads JSON config files.
+
+Minimal example:
+
+```json
+{
+  "workloads": [
+    {
+      "name": "my-app",
+      "environment": "prod",
+      "container_name": "my-container",
+      "deploy_command": "make redploy-app",
+      "check_interval": "60s",
+      "state_dir": "/path/to/state/dir",
+      "git_provider": {
+        "owner": "my-account",
+        "repo": "app-repo"
+      },
+      "strategy": {
+        "type": "env_file",
+        "env_file_path": "/path/to/.env",
+        "image_tag_key": "IMAGE_TAG"
+      },
+      "health_check": {
+        "type": "http",
+        "url": "http://localhost:8080/health",
+        "retries": 12,
+        "interval": "10s",
+        "timeout": "5s"
+      },
+      "labels": {
+        "app": "my-app"
+      }
+    }
+  ]
+}
+```
+
+## Deployment Strategy
+
+Strategies run after the image is pulled and before `deploy_command` is
+executed.
+
+The first supported strategy is `env_file`.
+
+```json
+{
+  "strategy": {
+    "type": "env_file",
+    "env_file_path": "/opt/gymportal/.env.deploy",
+    "image_tag_key": "IMAGE_TAG"
+  }
+}
+```
+
+This updates or creates the env file and sets:
+
+```text
+IMAGE_TAG=<latest image tag>
+```
+
+If `image_tag_key` is omitted for the `env_file` strategy, it defaults to
+`IMAGE_TAG`.
+
+This is useful when the deploy command delegates to a local script or Compose
+file that reads the image tag from an env file.
+
+## Health Checks
+
+Supported health check types:
+
+- `http`
+- `tcp`
+- `none`
+
+Recognized but not implemented:
+
+- `command`
+
+HTTP example:
+
+```json
+{
+  "health_check": {
+    "type": "http",
+    "url": "http://localhost:8080/health",
+    "retries": 12,
+    "interval": "10s",
+    "timeout": "5s"
+  }
+}
+```
+
+## State Files
+
+State is stored under each workload's `state_dir`.
+
+Files:
+
+- `deployed.json`: the current successful deployment.
+- `previous.json`: the previous successful deployment, used for rollback.
+
+The state includes workload name, image, image tag, manifest digest, git SHA,
+deployment time, and rollback information when applicable.
+
+## Rollback
+
+If deployment fails after there is a previous successful deployment, `reconD`
+attempts rollback using the previous state.
+
+Rollback runs the same deployment flow with previous metadata:
+
+1. Pull previous image.
+2. Run the configured strategy with previous metadata.
+3. Run `deploy_command`.
+4. Wait for health.
+5. Commit rollback state.
+
+Only one rollback generation is maintained initially.
+
+## Running Locally
+
+Prerequisites:
+
+- Go installed.
+- Docker installed and available on `PATH`.
+- A GitHub token if the release metadata is private.
+- A config file.
+
+Run tests:
+
+```sh
+env GOCACHE=/private/tmp/recond-go-build go test ./...
+```
+
+Run the agent:
+
+```sh
+GITHUB_TOKEN=your_token_here go run . -config ./test/sample.config.json
+```
+
+Logging is JSON by default.
+
+Optional logging environment variables:
+
+```sh
+LOG_FORMAT=text
+LOG_LEVEL=debug
+```
+
+## Local Test Fixture
+
+The `test/` directory contains a sample config and local Docker Compose fixture.
+
+Example:
+
+```sh
+make -f ./test/Makefile dev-up
+GITHUB_TOKEN=your_token_here LOG_FORMAT=text go run . -config ./test/sample.config.json
+```
+
+The sample deploy command calls:
+
+```sh
+make -f ./test/Makefile dev-redeploy
+```
+
+That Make target is just the local deployment command. `reconD` does not parse
+or manage the Compose file.
+
+## Configuration Fields
+
+Required workload fields:
+
+- `name`
+- `environment`
+- `container_name`
+- `deploy_command`
+- `state_dir`
+- `git_provider.owner`
+- `git_provider.repo`
+- `strategy.type`
+
+Common optional fields:
+
+- `notification_url`: Slack webhook URL.
+- `check_interval`: defaults to `60s` when below `10s`.
+- `health_check.retries`: defaults to `12`.
+- `health_check.interval`: defaults to `10s`.
+- `health_check.timeout`: defaults to `5s`.
+- `labels`: labels used to scope Docker image pruning.
+
+## Design Rule
+
+`reconD` ensures a single named workload is running the image specified by its
+deployment metadata.
+
+Everything else belongs to the deploy command or to external tooling.
