@@ -39,7 +39,7 @@ type githubClient struct {
 // token may be empty for public repositories (unauthenticated: 60 req/hr).
 // For production use, always provide a token (authenticated: 5000 req/hr).
 func NewGithubClient(owner, repo, token string) (GitProvider, error) {
-	var httpClient *http.Client
+	httpClient := &http.Client{Timeout: defaultHTTPTimeout}
 
 	if token != "" {
 		// oauth2.StaticTokenSource produces a transport that injects

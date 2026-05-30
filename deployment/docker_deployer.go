@@ -187,9 +187,6 @@ func (d *dockerDeployer) Deploy(ctx context.Context, workload config.Workload, m
 
 func (d *dockerDeployer) deploy(ctx context.Context, workload config.Workload, meta git_provider.DeploymentMetadata, stateMgr state.Manager) (state.DeploymentState, error) {
 	var newState state.DeploymentState
-	imageRef := imageReference(meta)
-
-	d.logger.Info("pulling image", "phase", logger.PhasePull, "workload", workload.Name, "image", imageRef)
 
 	if err := d.runStrategy(ctx, workload, meta); err != nil {
 		return newState, errors.Join(errDeploymentStrategyFailed, err)
@@ -389,19 +386,8 @@ func deploymentEnv(workload config.Workload, meta git_provider.DeploymentMetadat
 		"WORKLOAD_IMAGE=" + meta.Image,
 		"WORKLOAD_IMAGE_TAG=" + meta.ImageTag,
 		"WORKLOAD_MANIFEST_DIGEST=" + meta.ManifestDigest,
-		"WORKLOAD_IMAGE_REF=" + imageReference(meta),
 		"WORKLOAD_GIT_SHA=" + meta.GitSHA,
 	}
-}
-
-func imageReference(meta git_provider.DeploymentMetadata) string {
-	if meta.ManifestDigest != "" {
-		return meta.Image + "@" + meta.ManifestDigest
-	}
-	if meta.ImageTag != "" {
-		return meta.Image + ":" + meta.ImageTag
-	}
-	return meta.Image
 }
 
 func errorShouldTriggerRollback(err error) bool {
