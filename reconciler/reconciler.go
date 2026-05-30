@@ -166,16 +166,16 @@ func (r *Reconciler) hasDrift(ctx context.Context, actual state.DeploymentState,
 		return false, "", err
 	}
 	if !runtimeState.Running {
-		reason := runtimeState.Reason
-		if reason == "" {
-			reason = "container is not running"
-		}
-		return true, reason, nil
+
+		// if container not running, no drift.
+		// container lifecycle management is out of scope for this project
+		return false, "", nil
 	}
 
 	if runtimeState.ContainerManifestDigest == "" {
 		return true, "runtime container manifest digest is unavailable", nil
 	}
+
 	if actual.ManifestDigest != runtimeState.ContainerManifestDigest {
 		return true, fmt.Sprintf("current state digest [%s] != runtime container digest [%s]", actual.ManifestDigest, runtimeState.ContainerManifestDigest), nil
 	}
