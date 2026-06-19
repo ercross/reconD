@@ -6,7 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -91,12 +95,12 @@ func Load(path string) (*Config, error) {
 func parseConfig(path string, raw []byte) (*Config, error) {
 	var cfg Config
 
-	if err := json.Unmarshal(raw, &cfg); err != nil {
+	if err := unmarshalConfig(path, raw, &cfg); err != nil {
 		return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
 	}
 	if len(cfg.Workloads) == 0 {
 		var workload Workload
-		if err := json.Unmarshal(raw, &workload); err != nil {
+		if err := unmarshalConfig(path, raw, &workload); err != nil {
 			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
 		}
 		if workload.Name != "" {
@@ -105,6 +109,15 @@ func parseConfig(path string, raw []byte) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+func unmarshalConfig(path string, raw []byte, v any) error {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return yaml.Unmarshal(raw, v)
+	default:
+		return json.Unmarshal(raw, v)
+	}
 }
 
 func (w *Workload) fillDefaultOnZeroValues() {
@@ -190,7 +203,7 @@ func (h HealthCheck) validate() error {
 func (s Strategy) validate() error {
 	switch s.Type {
 	case "", StrategyNone:
-		return errors.New("strategy can not be empty")
+		return nil
 	case StrategyEnvFile:
 		if s.EnvFilePath == "" {
 			return errors.New("strategy.env_file_path is required for env_file strategy")
@@ -211,6 +224,19 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 	}
 	var seconds int64
 	if err := json.Unmarshal(data, &seconds); err != nil {
+		return err
+	}
+	d.Duration = time.Duration(seconds) * time.Second
+	return nil
+}
+
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err == nil {
+		return d.setString(s)
+	}
+	var seconds int64
+	if err := value.Decode(&seconds); err != nil {
 		return err
 	}
 	d.Duration = time.Duration(seconds) * time.Second
