@@ -1,3 +1,4 @@
+// Package config loads and validates reconD workload configuration.
 package config
 
 import (

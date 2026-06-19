@@ -1,3 +1,5 @@
+// Command reconD runs a deployment reconciliation agent for single-host
+// container workloads.
 package main
 
 import (

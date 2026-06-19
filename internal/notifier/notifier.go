@@ -1,3 +1,5 @@
+// Package notifier sends deployment lifecycle notifications to external
+// systems.
 package notifier
 
 import (

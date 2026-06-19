@@ -1,3 +1,5 @@
+// Package deployment applies desired workload versions to the local container
+// runtime and handles rollback when deployment fails.
 package deployment
 
 import (
