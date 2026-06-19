@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ercross/reconD/config"
-	"github.com/ercross/reconD/git_provider"
-	"github.com/ercross/reconD/health"
-	"github.com/ercross/reconD/logger"
-	"github.com/ercross/reconD/notifier"
-	"github.com/ercross/reconD/state"
+	"github.com/ercross/reconD/internal/config"
+	"github.com/ercross/reconD/internal/git_provider"
+	"github.com/ercross/reconD/internal/health"
+	"github.com/ercross/reconD/internal/logger"
+	"github.com/ercross/reconD/internal/notifier"
+	"github.com/ercross/reconD/internal/state"
 )
 
 type dockerDeployer struct {

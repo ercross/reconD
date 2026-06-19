@@ -8,19 +8,19 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ercross/reconD/config"
-	"github.com/ercross/reconD/deployment"
-	"github.com/ercross/reconD/git_provider"
-	"github.com/ercross/reconD/logger"
-	"github.com/ercross/reconD/notifier"
-	"github.com/ercross/reconD/state"
+	"github.com/ercross/reconD/internal/config"
+	deployment2 "github.com/ercross/reconD/internal/deployment"
+	"github.com/ercross/reconD/internal/git_provider"
+	"github.com/ercross/reconD/internal/logger"
+	"github.com/ercross/reconD/internal/notifier"
+	"github.com/ercross/reconD/internal/state"
 )
 
 type Reconciler struct {
 	workload     config.Workload
 	pollInterval time.Duration
 	gitProvider  git_provider.GitProvider
-	deployer     deployment.Deployer
+	deployer     deployment2.Deployer
 	stateMgr     state.Manager
 	log          *slog.Logger
 }
@@ -34,7 +34,7 @@ func New(
 ) *Reconciler {
 	workloadLog := logger.WithContainerName(log, workload.ContainerName)
 	workloadLog = workloadLog.With("workload", workload.Name)
-	d := deployment.NewDockerDeployer(workload, alertManager, workloadLog)
+	d := deployment2.NewDockerDeployer(workload, alertManager, workloadLog)
 
 	return &Reconciler{
 		workload:     workload,

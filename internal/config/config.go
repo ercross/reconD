@@ -1,3 +1,4 @@
+// Package config loads and validates reconD workload configuration.
 package config
 
 import (
@@ -13,16 +14,16 @@ type Config struct {
 }
 
 type Workload struct {
-	Name            string            `json:"name" yaml:"name"`
-	Environment     string            `json:"environment" yaml:"environment"`
-	ContainerName   string            `json:"container_name" yaml:"container_name"`
-	NotificationURL string            `json:"notification_url" yaml:"notification_url"`
-	DeployCommand   string            `json:"deploy_command" yaml:"deploy_command"`
-	CheckInterval   Duration          `json:"check_interval" yaml:"check_interval"`
-	StateDir        string            `json:"state_dir" yaml:"state_dir"`
-	GitProvider     GitProvider       `json:"git_provider" yaml:"git_provider"`
-	HealthCheck     HealthCheckConfig `json:"health_check" yaml:"health_check"`
-	Strategy        StrategyConfig    `json:"strategy" yaml:"strategy"`
+	Name            string      `json:"name" yaml:"name"`
+	Environment     string      `json:"environment" yaml:"environment"`
+	ContainerName   string      `json:"container_name" yaml:"container_name"`
+	NotificationURL string      `json:"notification_url" yaml:"notification_url"`
+	DeployCommand   string      `json:"deploy_command" yaml:"deploy_command"`
+	CheckInterval   Duration    `json:"check_interval" yaml:"check_interval"`
+	StateDir        string      `json:"state_dir" yaml:"state_dir"`
+	GitProvider     GitProvider `json:"git_provider" yaml:"git_provider"`
+	HealthCheck     HealthCheck `json:"health_check" yaml:"health_check"`
+	Strategy        Strategy    `json:"strategy" yaml:"strategy"`
 
 	// Labels optionally scope docker image pruning to this workload's images.
 	Labels map[string]string `json:"labels" yaml:"labels"`
@@ -35,7 +36,7 @@ type GitProvider struct {
 	Token string `json:"token" yaml:"token"`
 }
 
-type StrategyConfig struct {
+type Strategy struct {
 	Type        StrategyType `json:"type" yaml:"type"`
 	EnvFilePath string       `json:"env_file_path" yaml:"env_file_path"`
 	ImageTagKey string       `json:"image_tag_key" yaml:"image_tag_key"`
@@ -48,7 +49,7 @@ const (
 	StrategyEnvFile StrategyType = "env_file"
 )
 
-type HealthCheckConfig struct {
+type HealthCheck struct {
 	Type     HealthCheckType `json:"type" yaml:"type"`
 	URL      string          `json:"url" yaml:"url"`
 	Retries  int             `json:"retries" yaml:"retries"`
@@ -170,7 +171,7 @@ func (w Workload) validate() error {
 	return w.Strategy.validate()
 }
 
-func (h HealthCheckConfig) validate() error {
+func (h HealthCheck) validate() error {
 	switch h.Type {
 	case "", HealthCheckNone:
 		return nil
@@ -186,7 +187,7 @@ func (h HealthCheckConfig) validate() error {
 	return nil
 }
 
-func (s StrategyConfig) validate() error {
+func (s Strategy) validate() error {
 	switch s.Type {
 	case "", StrategyNone:
 		return errors.New("strategy can not be empty")

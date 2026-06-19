@@ -9,16 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ercross/reconD/config"
-	"github.com/ercross/reconD/git_provider"
-	"github.com/ercross/reconD/logger"
+	"github.com/ercross/reconD/internal/config"
+	"github.com/ercross/reconD/internal/git_provider"
+	"github.com/ercross/reconD/internal/logger"
 )
 
 type MetadataApplicationStrategy interface {
 	ApplyDeploymentMetadata(ctx context.Context, workload config.Workload, meta git_provider.DeploymentMetadata) error
 }
 
-func NewStrategy(cfg config.StrategyConfig, log *slog.Logger) MetadataApplicationStrategy {
+func NewStrategy(cfg config.Strategy, log *slog.Logger) MetadataApplicationStrategy {
 	switch cfg.Type {
 	case "", config.StrategyNone:
 		return nil
@@ -30,7 +30,7 @@ func NewStrategy(cfg config.StrategyConfig, log *slog.Logger) MetadataApplicatio
 }
 
 type envFileStrategy struct {
-	cfg config.StrategyConfig
+	cfg config.Strategy
 	log *slog.Logger
 }
 
