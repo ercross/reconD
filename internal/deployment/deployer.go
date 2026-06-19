@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ercross/reconD/config"
-	"github.com/ercross/reconD/git_provider"
-	"github.com/ercross/reconD/state"
+	"github.com/ercross/reconD/internal/config"
+	"github.com/ercross/reconD/internal/git_provider"
+	"github.com/ercross/reconD/internal/state"
 )
 
 type Deployer interface {
