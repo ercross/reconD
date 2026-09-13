@@ -3,8 +3,8 @@
 package notifier
 
 import (
-	"github.com/ercross/reconD/internal/git_provider"
-	"github.com/ercross/reconD/internal/state"
+	"github.com/ercross/reconD/git_provider"
+	"github.com/ercross/reconD/state"
 )
 
 // Notifier sends deployment state notifications or alert to external destinations like Slack.

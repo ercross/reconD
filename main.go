@@ -12,12 +12,12 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/ercross/reconD/internal/config"
-	git_provider2 "github.com/ercross/reconD/internal/git_provider"
-	"github.com/ercross/reconD/internal/logger"
-	notifier2 "github.com/ercross/reconD/internal/notifier"
-	"github.com/ercross/reconD/internal/reconciler"
-	"github.com/ercross/reconD/internal/state"
+	"github.com/ercross/reconD/config"
+	"github.com/ercross/reconD/git_provider"
+	"github.com/ercross/reconD/logger"
+	"github.com/ercross/reconD/notifier"
+	"github.com/ercross/reconD/reconciler"
+	"github.com/ercross/reconD/state"
 )
 
 func main() {
@@ -80,17 +80,17 @@ func run() error {
 	return nil
 }
 
-func gitProviderFor(workload config.Workload) (git_provider2.GitProvider, error) {
+func gitProviderFor(workload config.Workload) (git_provider.GitProvider, error) {
 	token := workload.GitProvider.Token
 	if token == "" {
 		token = os.Getenv("GITHUB_TOKEN")
 	}
-	return git_provider2.NewGithubClient(workload.GitProvider.Owner, workload.GitProvider.Repo, token)
+	return git_provider.NewGithubClient(workload.GitProvider.Owner, workload.GitProvider.Repo, token)
 }
 
-func notifierFor(workload config.Workload, log *slog.Logger) notifier2.Notifier {
+func notifierFor(workload config.Workload, log *slog.Logger) notifier.Notifier {
 	if workload.NotificationURL == "" {
-		return notifier2.Noop{}
+		return notifier.Noop{}
 	}
-	return notifier2.NewSlackNotifier(workload.NotificationURL, log)
+	return notifier.NewSlackNotifier(workload.NotificationURL, log)
 }

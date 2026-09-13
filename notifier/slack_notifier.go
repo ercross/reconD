@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ercross/reconD/internal/git_provider"
-	"github.com/ercross/reconD/internal/state"
+	"github.com/ercross/reconD/git_provider"
+	"github.com/ercross/reconD/state"
 )
 
 var defaultHTTPTimeout = 15 * time.Second
