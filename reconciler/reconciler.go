@@ -71,7 +71,7 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		if errors.Is(err, git_provider.ErrNoDeploymentMetaFound) {
 			r.log.Info("no deployment metadata found",
 				"phase", logger.PhasePoll,
-				"environment", r.workload.Environment,
+				"release_prefix", r.workload.ReleasePrefix,
 			)
 			return
 		}
@@ -132,7 +132,7 @@ func (r *Reconciler) fetchDesiredState(ctx context.Context) (git_provider.Deploy
 	if r.gitProvider == nil {
 		return git_provider.DeploymentMetadata{}, fmt.Errorf("workload %q has no git provider", r.workload.Name)
 	}
-	meta, err := r.gitProvider.FetchLatestDeploymentMetadata(ctx, r.workload.Environment)
+	meta, err := r.gitProvider.FetchLatestDeploymentMetadata(ctx, r.workload.ReleasePrefix)
 	if err != nil {
 		return meta, fmt.Errorf("failed to fetch metadata: %w", err)
 	}
@@ -146,10 +146,6 @@ func (r *Reconciler) validateDesiredState(meta git_provider.DeploymentMetadata) 
 	if meta.ManifestDigest == "" {
 		return fmt.Errorf("deployment metadata manifest_digest is required")
 	}
-	if r.workload.Environment != "" && meta.Environment != "" && meta.Environment != r.workload.Environment {
-		return fmt.Errorf("deployment metadata environment %q does not match workload environment %q", meta.Environment, r.workload.Environment)
-	}
-
 	return nil
 }
 

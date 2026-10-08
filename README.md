@@ -13,7 +13,7 @@ image state. It is not a container orchestrator.
 
 For each configured workload, `reconD` repeatedly:
 
-1. Fetches the latest `deployment-metadata.json` for an environment.
+1. Fetches the latest relevant `deployment-metadata.json`.
 2. Reads the currently committed deployment state from disk.
 3. Inspects the configured container to detect runtime drift.
 4. Pulls the desired image.
@@ -60,16 +60,23 @@ networking, routing, or workload composition, it belongs outside the agent.
 
 ## Deployment Metadata
 
-The Git provider implementation fetches and unmarshals `deployment-metadata.json`.
-The current GitHub implementation looks at image releases for the configured
-environment. In practice, the environment usually corresponds to the prefix used
-in image tags, such as `dev` or `prod`.
+The Git provider implementation fetches and unmarshals `deployment-metadata.json`
+from GitHub Releases.
+
+By default, reconD checks releases newest-first and deploys the first release
+that has a valid `deployment-metadata.json` asset. If a workload config sets
+`release_prefix`, reconD only considers release tags that start with that
+prefix. This is recommended when one repository publishes multiple deployable
+artifacts, packages, or deployment streams.
+
+For example, `release_prefix: api-prod` matches release tags such as
+`api-prod-sha-10a3e42`, while `release_prefix: worker-staging` matches
+`worker-staging-sha-8d1af01`.
 
 Example metadata:
 
 ```json
 {
-  "environment": "prod",
   "image": "ghcr.io/my-account/app-repo",
   "image_tag": "prod-sha-10a3e42",
   "manifest_digest": "sha256:19779d908d890f704a2170d7dde679e266a9137613ea299b38939eb889545f8e",
@@ -91,7 +98,7 @@ Minimal example:
 ```yaml
 workloads:
   - name: my-app
-    environment: prod
+    release_prefix: my-app-prod
     container_name: my-container
     deploy_command: make redeploy-app
     check_interval: 60s
@@ -264,7 +271,6 @@ or manage the Compose file.
 Required workload fields:
 
 - `name`
-- `environment`
 - `container_name`
 - `deploy_command`
 - `state_dir`
@@ -274,6 +280,7 @@ Required workload fields:
 
 Common optional fields:
 
+- `release_prefix`: release tag prefix used to scope metadata lookup. Recommended when a repository publishes more than one deployable artifact stream.
 - `notification_url`: Slack webhook URL.
 - `check_interval`: defaults to `60s` when below `10s`.
 - `health_check.retries`: defaults to `12`.

@@ -61,16 +61,17 @@ func NewGithubClient(owner, repo, token string) (GitProvider, error) {
 	}, nil
 }
 
-// FetchLatestDeploymentMetadata retrieves the most recent image release for
-// environment and unmarshals its deployment-metadata.json artifact.
-func (c *githubClient) FetchLatestDeploymentMetadata(ctx context.Context, environment string) (meta DeploymentMetadata, err error) {
+// FetchLatestDeploymentMetadata retrieves the most recent release matching
+// releasePrefix and unmarshals its deployment-metadata.json artifact. An empty
+// prefix considers all releases newest-first.
+func (c *githubClient) FetchLatestDeploymentMetadata(ctx context.Context, releasePrefix string) (meta DeploymentMetadata, err error) {
 	releases, err := c.listReleases(ctx)
 	if err != nil {
 		return meta, fmt.Errorf("list releases: %w", err)
 	}
 
 	for _, r := range releases {
-		if !strings.HasPrefix(r.GetTagName(), environment) {
+		if releasePrefix != "" && !strings.HasPrefix(r.GetTagName(), releasePrefix) {
 			continue
 		}
 
@@ -84,12 +85,6 @@ func (c *githubClient) FetchLatestDeploymentMetadata(ctx context.Context, enviro
 		meta, err = c.downloadMetadata(ctx, asset.GetID())
 		if err != nil {
 			return meta, fmt.Errorf("download metadata for release %q: %w", r.GetTagName(), err)
-		}
-
-		// Verify environment matches — defence against misconfigured CI
-		// publishing a production asset under a dev release tag.
-		if meta.Environment != environment {
-			continue
 		}
 
 		return meta, nil

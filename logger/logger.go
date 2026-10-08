@@ -4,7 +4,7 @@
 //   - JSON output by default for log aggregation (journald, Loki, Datadog)
 //   - Text output when LOG_FORMAT=text (local development)
 //   - Level controlled by LOG_LEVEL env var (debug, info, warn, error)
-//   - Structured fields: environment, phase, digest, duration included consistently
+//   - Structured fields: workload, phase, digest, duration included consistently
 package logger
 
 import (
@@ -37,8 +37,8 @@ func Setup() *slog.Logger {
 	return logger
 }
 
-// WithContainerName returns a child logger with the environment field pre-set.
-// All log lines emitted from the reconciler for an environment will carry this.
+// WithContainerName returns a child logger with the container field pre-set.
+// All log lines emitted from the reconciler for a container will carry this.
 func WithContainerName(logger *slog.Logger, containerName string) *slog.Logger {
 	return logger.With("container", containerName)
 }

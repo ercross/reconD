@@ -13,9 +13,6 @@ var (
 // DeploymentMetadata is the structure published as a release asset by CI.
 // The GitHub Actions workflow serializes this after a successful image push.
 type DeploymentMetadata struct {
-	// Environment is the target environment name (e.g. "dev", "production").
-	Environment string `json:"environment"`
-
 	// Image is the full image reference including tag.
 	Image string `json:"image"`
 
@@ -34,5 +31,5 @@ type DeploymentMetadata struct {
 }
 
 type GitProvider interface {
-	FetchLatestDeploymentMetadata(ctx context.Context, environment string) (meta DeploymentMetadata, err error)
+	FetchLatestDeploymentMetadata(ctx context.Context, releasePrefix string) (meta DeploymentMetadata, err error)
 }

@@ -15,7 +15,6 @@ func TestLoadRejectsYAMLWithoutWorkloadsKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workload.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(`
 name: gymportal-api
-environment: prod
 container_name: gymportal-api
 deploy_command: docker stop gymportal-api || true && docker rm gymportal-api || true && docker run -d --name gymportal-api "$WORKLOAD_IMAGE_REF"
 state_dir: /tmp/recond/gymportal-api
@@ -42,7 +41,7 @@ func TestLoadWorkloadListYAML(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 workloads:
   - name: api
-    environment: prod
+    release_prefix: api-prod
     container_name: api
     deploy_command: docker stop api || true && docker rm api || true && docker run -d --name api "$WORKLOAD_IMAGE_REF"
     state_dir: /tmp/recond/api
@@ -54,7 +53,6 @@ workloads:
       type: tcp
       url: tcp://localhost:8080
   - name: worker
-    environment: prod
     container_name: worker
     deploy_command: docker stop worker || true && docker rm worker || true && docker run -d --name worker "$WORKLOAD_IMAGE_REF"
     state_dir: /tmp/recond/worker
@@ -68,9 +66,11 @@ workloads:
 	require.NoError(t, err)
 	require.Len(t, cfg.Workloads, 2)
 	require.Equal(t, "api", cfg.Workloads[0].Name)
+	require.Equal(t, "api-prod", cfg.Workloads[0].ReleasePrefix)
 	require.Equal(t, 45*time.Second, cfg.Workloads[0].CheckInterval.Duration)
 	require.Equal(t, HealthCheckTCP, cfg.Workloads[0].HealthCheck.Type)
 	require.Equal(t, "worker", cfg.Workloads[1].Name)
+	require.Empty(t, cfg.Workloads[1].ReleasePrefix)
 	require.Equal(t, 2*time.Minute, cfg.Workloads[1].CheckInterval.Duration)
 }
 
@@ -82,7 +82,7 @@ func TestLoadRejectsJSONConfigExtension(t *testing.T) {
   "workloads": [
     {
       "name": "api",
-      "environment": "prod",
+      "release_prefix": "api-prod",
       "container_name": "api",
       "deploy_command": "docker stop api || true && docker rm api || true && docker run -d --name api \"$WORKLOAD_IMAGE_REF\"",
       "state_dir": "/tmp/recond/api",
@@ -122,7 +122,7 @@ func TestLoadRejectsWorkloadsMapping(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 workloads:
   name: api
-  environment: prod
+  release_prefix: api-prod
 `), 0o600))
 
 	_, err := Load(path)
@@ -136,7 +136,6 @@ func TestLoadRejectsInvalidDuration(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 workloads:
   - name: api
-    environment: prod
     container_name: api
     deploy_command: docker stop api || true && docker rm api || true && docker run -d --name api "$WORKLOAD_IMAGE_REF"
     state_dir: /tmp/recond/api
@@ -170,7 +169,6 @@ func TestLoadRejectsTCPHealthCheckWithoutURL(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`
 workloads:
   - name: api
-    environment: prod
     container_name: api
     deploy_command: docker stop api || true && docker rm api || true && docker run -d --name api "$WORKLOAD_IMAGE_REF"
     state_dir: /tmp/recond/api
