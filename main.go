@@ -20,6 +20,11 @@ import (
 	"github.com/ercross/reconD/state"
 )
 
+var (
+	defaultConfigFile           = "/etc/reconD/config.yaml"
+	defaultDeploymentsStateFile = "/var/lib/reconD/deployments_state.json"
+)
+
 func main() {
 	if err := run(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
@@ -28,10 +33,14 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "/etc/reconD/config.yaml", "path to agent config file")
+	configPath := flag.String("config", defaultConfigFile, "path to agent config file")
+	statePath := flag.String("state", defaultDeploymentsStateFile, "path to deployments state file")
 	flag.Parse()
 	if *configPath == "" {
 		return fmt.Errorf("missing config path")
+	}
+	if *statePath == "" {
+		return fmt.Errorf("missing deployments state path")
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -40,19 +49,18 @@ func run() error {
 	}
 
 	log := logger.Setup(cfg.Log)
-	log.Info("deployment agent starting", "config", *configPath)
+	log.Info("deployment agent starting", "config", *configPath, "state", *statePath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
+	stateMgr, err := state.NewManagerWithLocalFileSystem(*statePath)
+	if err != nil {
+		return fmt.Errorf("create deployments state manager: %w", err)
+	}
+
 	var wg sync.WaitGroup
 	for _, workload := range cfg.Workloads {
-
-		stateMgr, err := state.NewManagerWithLocalFileSystem(workload.StateDir)
-		if err != nil {
-			return fmt.Errorf("create state manager for workload %q: %w", workload.Name, err)
-		}
-
 		gp, err := gitProviderFor(workload)
 		if err != nil {
 			return fmt.Errorf("create git provider for workload %q: %w", workload.Name, err)

@@ -1,11 +1,10 @@
-// Package state manages persistent deployment state for each workload.
-// State is stored as JSON files on disk, making it inspectable by operators
+// Package state manages persistent deployment state for all workloads.
+// State is stored as a JSON file on disk, making it inspectable by operators
 // and safe across agent restarts.
 //
-// File layout per workload:
+// File layout:
 //
-//	{state_dir}/deployed.json  — the currently active deployment
-//	{state_dir}/previous.json  — the deployment before the last successful one
+//	{state_file} — the current and previous deployment for every workload
 //
 // The write path uses atomic rename to prevent partial writes from corrupting
 // the state file during a crash.
@@ -17,17 +16,31 @@ import (
 )
 
 type Manager interface {
-	LoadDeployed() (DeploymentState, error)
-	LoadPrevious() (DeploymentState, error)
-	CommitDeployed(s DeploymentState) error
-	CommitRollback(s DeploymentState) error
+	LoadDeployed(deploymentName string) (DeploymentState, error)
+	LoadPrevious(deploymentName string) (DeploymentState, error)
+	CommitDeployed(deploymentName string, s DeploymentState) error
+	CommitRollback(deploymentName string, s DeploymentState) error
 }
 
-var ErrFileNotFound = errors.New("file not found")
+var (
+	ErrFileNotFound            = errors.New("state file not found")
+	ErrDeploymentStateNotFound = errors.New("deployment state not found")
+)
+
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrDeploymentStateNotFound)
+}
+
+// DeploymentStateNew represents the current and previous deployment for one workload.
+type DeploymentStateNew struct {
+	WorkloadName string          `json:"workload_name" yaml:"workload_name"`
+	Current      DeploymentState `json:"current" yaml:"current"`
+	Previous     DeploymentState `json:"previous" yaml:"previous"`
+}
 
 // DeploymentState represents a point-in-time snapshot of what is deployed.
 type DeploymentState struct {
-	Workload string `json:"workload"`
+	WorkloadName string `json:"workload_name"`
 
 	// Image is the full image reference that is deployed.
 	Image string `json:"image"`

@@ -47,7 +47,6 @@ workloads:
     release_prefix: api-prod
     container_name: api
     deploy_command: docker stop api || true && docker rm api || true && docker run -d --name api "$WORKLOAD_IMAGE_REF"
-    state_dir: /tmp/recond/api
     check_interval: 45
     git_provider:
       owner: toughbred
@@ -58,7 +57,6 @@ workloads:
   - name: worker
     container_name: worker
     deploy_command: docker stop worker || true && docker rm worker || true && docker run -d --name worker "$WORKLOAD_IMAGE_REF"
-    state_dir: /tmp/recond/worker
     check_interval: 2m
     git_provider:
       owner: toughbred
@@ -77,6 +75,30 @@ workloads:
 	require.Equal(t, "worker", cfg.Workloads[1].Name)
 	require.Empty(t, cfg.Workloads[1].ReleasePrefix)
 	require.Equal(t, 2*time.Minute, cfg.Workloads[1].CheckInterval.Duration)
+}
+
+func TestLoadRejectsDuplicateWorkloadName(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "workloads.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+workloads:
+  - name: api
+    container_name: api
+    deploy_command: docker stop api || true && docker rm api || true && docker run -d --name api "$WORKLOAD_IMAGE_REF"
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+  - name: api
+    container_name: api-v2
+    deploy_command: docker stop api-v2 || true && docker rm api-v2 || true && docker run -d --name api-v2 "$WORKLOAD_IMAGE_REF"
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+`), 0o600))
+
+	_, err := Load(path)
+	require.ErrorContains(t, err, `duplicate name "api"`)
 }
 
 func TestLoadRejectsJSONConfigExtension(t *testing.T) {

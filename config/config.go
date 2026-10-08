@@ -63,10 +63,6 @@ type Workload struct {
 	// number of seconds; values below 10s default to 60s.
 	CheckInterval Duration `yaml:"check_interval"`
 
-	// StateDir is required and points to the local directory where reconD stores
-	// deployed and rollback state for this workload.
-	StateDir string `yaml:"state_dir"`
-
 	// GitProvider is required and tells reconD which repository to read
 	// deployment metadata from.
 	GitProvider GitProvider `yaml:"git_provider"`
@@ -223,10 +219,15 @@ func (cfg Config) validate() error {
 		return fmt.Errorf("at least one workload must be configured")
 	}
 
+	workloadNames := make(map[string]struct{}, len(cfg.Workloads))
 	for i, workload := range cfg.Workloads {
 		if err := workload.validate(); err != nil {
 			return fmt.Errorf("workload %d: %w", i, err)
 		}
+		if _, ok := workloadNames[workload.Name]; ok {
+			return fmt.Errorf("workload %d: duplicate name %q", i, workload.Name)
+		}
+		workloadNames[workload.Name] = struct{}{}
 	}
 	return nil
 }
@@ -240,9 +241,6 @@ func (w Workload) validate() error {
 	}
 	if w.DeployCommand == "" {
 		return errors.New("deploy_command is required")
-	}
-	if w.StateDir == "" {
-		return errors.New("state_dir is required")
 	}
 	if w.GitProvider.Owner == "" {
 		return errors.New("git_provider.owner is required")

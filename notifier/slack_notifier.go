@@ -88,9 +88,9 @@ func slackNotificationFromDeploymentMeta(workloadName string, meta git_provider.
 func slackNotificationFromDeploymentState(depState state.DeploymentState, st deploymentState) slackNotification {
 	return slackNotification{
 		State:          st,
-		Workload:       depState.Workload,
+		Workload:       depState.WorkloadName,
 		Image:          depState.Image,
-		ImageTag:       "<none>",
+		ImageTag:       depState.ImageTag,
 		ManifestDigest: depState.ManifestDigest,
 		GitSHA:         depState.GitSHA,
 		RollbackFrom:   depState.RollbackFrom,

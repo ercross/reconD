@@ -6,106 +6,184 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
-// managerWithLocalFileSystem handles reading and writing deployment state for one workload.
+type deploymentsStateFile struct {
+	Deployments []DeploymentStateNew `json:"deployments"`
+}
+
+// managerWithLocalFileSystem handles reading and writing deployment state for all workloads.
 type managerWithLocalFileSystem struct {
-	dir string
+	path string
+	mu   sync.Mutex
 }
 
-// NewManagerWithLocalFileSystem creates a state manager rooted at dir.
-// It creates the directory if it does not exist.
-func NewManagerWithLocalFileSystem(dir string) (Manager, error) {
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return nil, fmt.Errorf("create state dir %q: %w", dir, err)
+// NewManagerWithLocalFileSystem creates a state manager backed by path.
+// It creates the parent directory if it does not exist.
+func NewManagerWithLocalFileSystem(path string) (Manager, error) {
+	if path == "" {
+		return nil, fmt.Errorf("state file path is required")
 	}
-	return &managerWithLocalFileSystem{dir: dir}, nil
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, fmt.Errorf("create state dir for %q: %w", path, err)
+	}
+	return &managerWithLocalFileSystem{path: path}, nil
 }
 
-// LoadDeployed returns the currently deployed state.
-// Returns nil, nil if no state has been committed yet (first deployment).
-func (m *managerWithLocalFileSystem) LoadDeployed() (DeploymentState, error) {
-	return m.load(m.deployedPath())
+// LoadDeployed returns the currently deployed state for deploymentName.
+func (m *managerWithLocalFileSystem) LoadDeployed(deploymentName string) (DeploymentState, error) {
+	if deploymentName == "" {
+		return DeploymentState{}, fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	record, err := m.loadDeployment(deploymentName)
+	if err != nil {
+		return DeploymentState{}, err
+	}
+	if isZeroDeploymentState(record.Current) {
+		return DeploymentState{}, ErrDeploymentStateNotFound
+	}
+	return record.Current, nil
 }
 
-// LoadPrevious returns the previous deployment state.
-// Returns nil, nil if there is no previous state (e.g. first rollback attempt).
-func (m *managerWithLocalFileSystem) LoadPrevious() (DeploymentState, error) {
-	return m.load(m.previousPath())
+// LoadPrevious returns the previous deployment state for deploymentName.
+func (m *managerWithLocalFileSystem) LoadPrevious(deploymentName string) (DeploymentState, error) {
+	if deploymentName == "" {
+		return DeploymentState{}, fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	record, err := m.loadDeployment(deploymentName)
+	if err != nil {
+		return DeploymentState{}, err
+	}
+	if isZeroDeploymentState(record.Previous) {
+		return DeploymentState{}, ErrDeploymentStateNotFound
+	}
+	return record.Previous, nil
 }
 
-// CommitDeployed atomically persists s as the current deployed state.
-// The previous deployed.json (if any) is promoted to previous.json first,
-// so we always have a valid rollback target after a successful deployment.
-func (m *managerWithLocalFileSystem) CommitDeployed(s DeploymentState) error {
-	// Promote current → previous before writing new current.
-	if err := m.promoteToPrevious(); err != nil {
-		if !errors.Is(err, ErrFileNotFound) {
-			return fmt.Errorf("promote previous state: %w", err)
+// CommitDeployed atomically persists s as the current deployed state for deploymentName.
+// The current state, if any, is promoted to previous first.
+func (m *managerWithLocalFileSystem) CommitDeployed(deploymentName string, s DeploymentState) error {
+	if deploymentName == "" {
+		return fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	fileState, err := m.loadAll()
+	if err != nil && !errors.Is(err, ErrFileNotFound) {
+		return err
+	}
+
+	record := upsertDeployment(&fileState, deploymentName)
+	if !isZeroDeploymentState(record.Current) {
+		record.Previous = record.Current
+	}
+	s.WorkloadName = deploymentName
+	record.Current = s
+
+	return m.writeAtomic(fileState)
+}
+
+// CommitRollback persists s as the current deployed state after a rollback.
+// It does not update Previous, preserving the last known-good rollback target.
+func (m *managerWithLocalFileSystem) CommitRollback(deploymentName string, s DeploymentState) error {
+	if deploymentName == "" {
+		return fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	fileState, err := m.loadAll()
+	if err != nil && !errors.Is(err, ErrFileNotFound) {
+		return err
+	}
+
+	record := upsertDeployment(&fileState, deploymentName)
+	s.WorkloadName = deploymentName
+	record.Current = s
+
+	return m.writeAtomic(fileState)
+}
+
+func (m *managerWithLocalFileSystem) loadDeployment(deploymentName string) (DeploymentStateNew, error) {
+	fileState, err := m.loadAll()
+	if err != nil {
+		return DeploymentStateNew{}, err
+	}
+
+	for _, deployment := range fileState.Deployments {
+		if deployment.WorkloadName == deploymentName {
+			return deployment, nil
 		}
-		// No current state to promote — this is the first deployment.
 	}
-	return m.writeAtomic(m.deployedPath(), s)
+	return DeploymentStateNew{}, ErrDeploymentStateNotFound
 }
 
-// CommitRollback persists s as the deployed state after a rollback.
-// It does NOT update previous.json, preserving the failed-deployment record
-// for post-incident analysis.
-func (m *managerWithLocalFileSystem) CommitRollback(s DeploymentState) error {
-	return m.writeAtomic(m.deployedPath(), s)
-}
+func (m *managerWithLocalFileSystem) loadAll() (deploymentsStateFile, error) {
+	var fileState deploymentsStateFile
 
-// promoteToPrevious copies deployed.json → previous.json.
-// This is called before committing a new deployment so we retain the last
-// known-good state as a rollback target.
-func (m *managerWithLocalFileSystem) promoteToPrevious() error {
-	current, err := m.LoadDeployed()
-	if err != nil {
-		return fmt.Errorf("failed to load current deployed: %w", err)
-	}
-	return m.writeAtomic(m.previousPath(), current)
-}
-
-func (m *managerWithLocalFileSystem) load(path string) (s DeploymentState, err error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(m.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return s, ErrFileNotFound
+		return fileState, ErrFileNotFound
 	}
 	if err != nil {
-		return s, fmt.Errorf("read state %q: %w", path, err)
+		return fileState, fmt.Errorf("read state %q: %w", m.path, err)
+	}
+	if len(data) == 0 {
+		return fileState, nil
 	}
 
-	if err = json.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("parse state %q: %w", path, err)
+	if err = json.Unmarshal(data, &fileState); err != nil {
+		return fileState, fmt.Errorf("parse state %q: %w", m.path, err)
 	}
-	return s, nil
+	return fileState, nil
 }
 
-// writeAtomic writes s to path using a write-then-rename pattern.
-// This ensures that readers never see a partial write, even if the agent
-// crashes mid-write.
-func (m *managerWithLocalFileSystem) writeAtomic(path string, s DeploymentState) error {
-	data, err := json.MarshalIndent(s, "", "  ")
+func (m *managerWithLocalFileSystem) writeAtomic(fileState deploymentsStateFile) error {
+	if err := os.MkdirAll(filepath.Dir(m.path), 0o750); err != nil {
+		return fmt.Errorf("create state dir for %q: %w", m.path, err)
+	}
+
+	data, err := json.MarshalIndent(fileState, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal state: %w", err)
 	}
 
-	// Write to a temp file in the same directory so the rename is atomic
-	// (both source and destination are on the same filesystem).
-	tmp := path + ".tmp"
+	tmp := m.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o640); err != nil {
 		return fmt.Errorf("write temp state %q: %w", tmp, err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp) // best-effort cleanup
-		return fmt.Errorf("rename state %q → %q: %w", tmp, path, err)
+	if err := os.Rename(tmp, m.path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("rename state %q to %q: %w", tmp, m.path, err)
 	}
 	return nil
 }
 
-func (m *managerWithLocalFileSystem) deployedPath() string {
-	return filepath.Join(m.dir, "deployed.json")
+func upsertDeployment(fileState *deploymentsStateFile, deploymentName string) *DeploymentStateNew {
+	for i := range fileState.Deployments {
+		if fileState.Deployments[i].WorkloadName == deploymentName {
+			return &fileState.Deployments[i]
+		}
+	}
+
+	fileState.Deployments = append(fileState.Deployments, DeploymentStateNew{
+		WorkloadName: deploymentName,
+	})
+	return &fileState.Deployments[len(fileState.Deployments)-1]
 }
-func (m *managerWithLocalFileSystem) previousPath() string {
-	return filepath.Join(m.dir, "previous.json")
+
+func isZeroDeploymentState(s DeploymentState) bool {
+	return s == DeploymentState{}
 }
