@@ -14,7 +14,6 @@ func TestLocalFileSystemManagerCommitDeployedWritesFirstDeployment(t *testing.T)
 	require.NoError(t, err)
 
 	expected := DeploymentState{
-		Environment:    "dev",
 		Image:          "ghcr.io/example/app:v1.0.0",
 		ManifestDigest: "v1.0.0",
 		GitSHA:         "sha-v1.0.0",
@@ -25,7 +24,6 @@ func TestLocalFileSystemManagerCommitDeployedWritesFirstDeployment(t *testing.T)
 
 	actual, err := manager.LoadDeployed()
 	require.NoError(t, err)
-	require.Equal(t, expected.Environment, actual.Environment)
 	require.Equal(t, expected.Image, actual.Image)
 	require.Equal(t, expected.ManifestDigest, actual.ManifestDigest)
 	require.Equal(t, expected.GitSHA, actual.GitSHA)
@@ -41,14 +39,12 @@ func TestLocalFileSystemManagerCommitDeployedPromotesPreviousDeployment(t *testi
 	require.NoError(t, err)
 
 	first := DeploymentState{
-		Environment:    "dev",
 		Image:          "ghcr.io/example/app:v1.0.0",
 		ManifestDigest: "v1.0.0",
 		GitSHA:         "sha-v1.0.0",
 		DeployedAt:     time.Now().UTC(),
 	}
 	second := DeploymentState{
-		Environment:    "dev",
 		Image:          "ghcr.io/example/app:v1.1.0",
 		ManifestDigest: "v1.1.0",
 		GitSHA:         "sha-v1.1.0",

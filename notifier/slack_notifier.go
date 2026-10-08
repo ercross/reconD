@@ -32,7 +32,7 @@ const (
 
 type slackNotification struct {
 	State          deploymentState `json:"state"`
-	Environment    string          `json:"environment"`
+	Workload       string          `json:"workload"`
 	Image          string          `json:"image"`
 	ImageTag       string          `json:"image_tag"`
 	ManifestDigest string          `json:"manifest_digest"`
@@ -49,15 +49,15 @@ func NewSlackNotifier(url string, log *slog.Logger) *Slack {
 	}
 }
 
-func (sl *Slack) NotifyOnNewDeploymentStarted(meta git_provider.DeploymentMetadata) {
-	msg := slackNotificationFromDeploymentMeta(meta, deploymentStateInitialize)
+func (sl *Slack) NotifyOnNewDeploymentStarted(workloadName string, meta git_provider.DeploymentMetadata) {
+	msg := slackNotificationFromDeploymentMeta(workloadName, meta, deploymentStateInitialize)
 	err := sl.send(msg)
 	if err != nil {
 		sl.log.Error("failed to send slack notification", "error", err)
 	}
 }
-func (sl *Slack) NotifyOnDeploymentFailed(meta git_provider.DeploymentMetadata, err error) {
-	msg := slackNotificationFromDeploymentMeta(meta, deploymentStateFailed)
+func (sl *Slack) NotifyOnDeploymentFailed(workloadName string, meta git_provider.DeploymentMetadata, err error) {
+	msg := slackNotificationFromDeploymentMeta(workloadName, meta, deploymentStateFailed)
 	msg.Error = err.Error()
 	err = sl.send(msg)
 	if err != nil {
@@ -73,10 +73,10 @@ func (sl *Slack) NotifyOnDeploymentSuccess(dep state.DeploymentState) {
 	}
 }
 
-func slackNotificationFromDeploymentMeta(meta git_provider.DeploymentMetadata, state deploymentState) slackNotification {
+func slackNotificationFromDeploymentMeta(workloadName string, meta git_provider.DeploymentMetadata, state deploymentState) slackNotification {
 	return slackNotification{
 		State:          state,
-		Environment:    meta.Environment,
+		Workload:       workloadName,
 		Image:          meta.Image,
 		ImageTag:       meta.ImageTag,
 		ManifestDigest: meta.ManifestDigest,
@@ -88,7 +88,7 @@ func slackNotificationFromDeploymentMeta(meta git_provider.DeploymentMetadata, s
 func slackNotificationFromDeploymentState(depState state.DeploymentState, st deploymentState) slackNotification {
 	return slackNotification{
 		State:          st,
-		Environment:    depState.Environment,
+		Workload:       depState.Workload,
 		Image:          depState.Image,
 		ImageTag:       "<none>",
 		ManifestDigest: depState.ManifestDigest,
@@ -151,15 +151,15 @@ func buildSlackMessage(msg slackNotification) map[string]interface{} {
 
 	return map[string]interface{}{
 		"text": fmt.Sprintf(
-			"Deployment on %s",
-			msg.Environment,
+			"Deployment for %s",
+			msg.Workload,
 		),
 		"blocks": []slackBlock{
 			{
 				Type: "header",
 				Text: &slackText{
 					Type: "plain_text",
-					Text: fmt.Sprintf(" 🛠️Environment %s", msg.Environment),
+					Text: fmt.Sprintf("Workload %s", msg.Workload),
 				},
 			},
 			{

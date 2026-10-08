@@ -29,8 +29,6 @@ var ErrFileNotFound = errors.New("file not found")
 type DeploymentState struct {
 	Workload string `json:"workload"`
 
-	Environment string `json:"environment,omitempty"`
-
 	// Image is the full image reference that is deployed.
 	Image string `json:"image"`
 

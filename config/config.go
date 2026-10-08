@@ -25,10 +25,12 @@ type Workload struct {
 	// persisted deployment state.
 	Name string `yaml:"name"`
 
-	// Environment is required and names the deployment environment, such as
-	// "prod" or "staging". It is passed to deploy commands as
-	// WORKLOAD_ENVIRONMENT and stored with deployment state.
-	Environment string `yaml:"environment"`
+	// ReleasePrefix is optional and scopes GitHub release selection by tag
+	// prefix. For example, "api-prod" matches release tags like
+	// "api-prod-sha-10a3e42". Leave it empty only when this repository publishes
+	// one deployable artifact stream or when the newest valid metadata release is
+	// always the desired workload.
+	ReleasePrefix string `yaml:"release_prefix"`
 
 	// ContainerName is required and must match the Docker container reconD
 	// inspects to determine the workload's current runtime state.
@@ -228,9 +230,6 @@ func (w Workload) validate() error {
 	}
 	if w.StateDir == "" {
 		return errors.New("state_dir is required")
-	}
-	if w.Environment == "" {
-		return errors.New("environment is required")
 	}
 	if w.GitProvider.Owner == "" {
 		return errors.New("git_provider.owner is required")

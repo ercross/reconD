@@ -153,7 +153,7 @@ func (d *dockerDeployer) Deploy(ctx context.Context, workload config.Workload, m
 	}
 	noPreviousState := errors.Is(err, state.ErrFileNotFound)
 
-	d.notifier.NotifyOnNewDeploymentStarted(meta)
+	d.notifier.NotifyOnNewDeploymentStarted(workload.Name, meta)
 
 	newState, err := d.deploy(ctx, workload, meta, stateMgr)
 	if err == nil {
@@ -164,7 +164,7 @@ func (d *dockerDeployer) Deploy(ctx context.Context, workload config.Workload, m
 		return nil
 	}
 
-	d.notifier.NotifyOnDeploymentFailed(meta, err)
+	d.notifier.NotifyOnDeploymentFailed(workload.Name, meta, err)
 	d.logger.Error("deployment failed", "workload", workload.Name, "error", err)
 	if !errorShouldTriggerRollback(err) {
 		return fmt.Errorf("deployment failed but no rollback required: %w", err)
@@ -181,7 +181,7 @@ func (d *dockerDeployer) Deploy(ctx context.Context, workload config.Workload, m
 		return nil
 	}
 
-	d.notifier.NotifyOnDeploymentFailed(meta, fmt.Errorf("ROLLBACK FAILED: %w", rollbackErr))
+	d.notifier.NotifyOnDeploymentFailed(workload.Name, meta, fmt.Errorf("ROLLBACK FAILED: %w", rollbackErr))
 	return fmt.Errorf("deployment and rollback failed: %w", rollbackErr)
 }
 
@@ -203,7 +203,6 @@ func (d *dockerDeployer) deploy(ctx context.Context, workload config.Workload, m
 
 	newState = state.DeploymentState{
 		Workload:       workload.Name,
-		Environment:    meta.Environment,
 		Image:          meta.Image,
 		ImageTag:       meta.ImageTag,
 		ManifestDigest: meta.ManifestDigest,
@@ -233,7 +232,6 @@ func (d *dockerDeployer) rollback(ctx context.Context, stateMgr state.Manager, w
 	)
 
 	previousStateMeta := git_provider.DeploymentMetadata{
-		Environment:    previousState.Environment,
 		Image:          previousState.Image,
 		ImageTag:       previousState.ImageTag,
 		ManifestDigest: previousState.ManifestDigest,
@@ -255,7 +253,6 @@ func (d *dockerDeployer) rollback(ctx context.Context, stateMgr state.Manager, w
 
 	rollbackState = state.DeploymentState{
 		Workload:       workload.Name,
-		Environment:    previousState.Environment,
 		Image:          previousState.Image,
 		ImageTag:       previousState.ImageTag,
 		ManifestDigest: previousState.ManifestDigest,
@@ -382,7 +379,6 @@ func deploymentEnv(workload config.Workload, meta git_provider.DeploymentMetadat
 	return []string{
 		"WORKLOAD_NAME=" + workload.Name,
 		"WORKLOAD_CONTAINER_NAME=" + workload.ContainerName,
-		"WORKLOAD_ENVIRONMENT=" + meta.Environment,
 		"WORKLOAD_IMAGE=" + meta.Image,
 		"WORKLOAD_IMAGE_TAG=" + meta.ImageTag,
 		"WORKLOAD_MANIFEST_DIGEST=" + meta.ManifestDigest,

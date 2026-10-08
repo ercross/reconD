@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// managerWithLocalFileSystem handles reading and writing deployment state for one environment.
+// managerWithLocalFileSystem handles reading and writing deployment state for one workload.
 type managerWithLocalFileSystem struct {
 	dir string
 }
