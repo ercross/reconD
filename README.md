@@ -80,42 +80,37 @@ Example metadata:
 
 ## Configuration
 
-`reconD` currently loads JSON config files.
+`reconD` loads YAML config files. Config paths must use a `.yaml` or `.yml`
+extension.
+
+Every config file must define a top-level `workloads` list, even when it only
+contains one workload.
 
 Minimal example:
 
-```json
-{
-  "workloads": [
-    {
-      "name": "my-app",
-      "environment": "prod",
-      "container_name": "my-container",
-      "deploy_command": "make redploy-app",
-      "check_interval": "60s",
-      "state_dir": "/path/to/state/dir",
-      "git_provider": {
-        "owner": "my-account",
-        "repo": "app-repo"
-      },
-      "strategy": {
-        "type": "env_file",
-        "env_file_path": "/path/to/.env",
-        "image_tag_key": "IMAGE_TAG"
-      },
-      "health_check": {
-        "type": "http",
-        "url": "http://localhost:8080/health",
-        "retries": 12,
-        "interval": "10s",
-        "timeout": "5s"
-      },
-      "labels": {
-        "app": "my-app"
-      }
-    }
-  ]
-}
+```yaml
+workloads:
+  - name: my-app
+    environment: prod
+    container_name: my-container
+    deploy_command: make redeploy-app
+    check_interval: 60s
+    state_dir: /path/to/state/dir
+    git_provider:
+      owner: my-account
+      repo: app-repo
+    strategy:
+      type: env_file
+      env_file_path: /path/to/.env
+      image_tag_key: IMAGE_TAG
+    health_check:
+      type: http
+      url: http://localhost:8080/health
+      retries: 12
+      interval: 10s
+      timeout: 5s
+    labels:
+      app: my-app
 ```
 
 ## Deployment Strategy
@@ -125,14 +120,11 @@ executed.
 
 The first supported strategy is `env_file`.
 
-```json
-{
-  "strategy": {
-    "type": "env_file",
-    "env_file_path": "/opt/gymportal/.env.deploy",
-    "image_tag_key": "IMAGE_TAG"
-  }
-}
+```yaml
+strategy:
+  type: env_file
+  env_file_path: /opt/gymportal/.env.deploy
+  image_tag_key: IMAGE_TAG
 ```
 
 This updates or creates the env file and sets:
@@ -161,16 +153,13 @@ Recognized but not implemented:
 
 HTTP example:
 
-```json
-{
-  "health_check": {
-    "type": "http",
-    "url": "http://localhost:8080/health",
-    "retries": 12,
-    "interval": "10s",
-    "timeout": "5s"
-  }
-}
+```yaml
+health_check:
+  type: http
+  url: http://localhost:8080/health
+  retries: 12
+  interval: 10s
+  timeout: 5s
 ```
 
 ## State Files
@@ -218,7 +207,7 @@ env GOCACHE=/private/tmp/recond-go-build go test ./...
 Run the agent:
 
 ```sh
-GITHUB_TOKEN=your_token_here go run . -config ./test/sample.config.json
+GITHUB_TOKEN=your_token_here go run . -config your-config.yaml
 ```
 
 Logging is JSON by default.
@@ -230,6 +219,26 @@ LOG_FORMAT=text
 LOG_LEVEL=debug
 ```
 
+## Operating Model
+
+For production use, `reconD` is best treated as a host-level service: install
+the binary on the host, run it under a process manager such as systemd, keep
+configuration under a host path such as `/etc/reconD`, and keep workload state
+under a persistent host path such as `/var/lib/reconD`.
+
+This matches the agent's job. It observes host container state, runs the local
+`docker` command, writes local deployment state, and executes the configured
+`deploy_command`, which may depend on host paths, scripts, Make targets, Compose
+files, or environment files.
+
+Running `reconD` as a Docker container is possible, but it should be considered
+an advanced packaging option rather than the default operating model. A
+containerized agent typically needs access to the host Docker socket, persistent
+state and config mounts, and sometimes host networking or host project
+directories. Mounting the Docker socket gives the agent broad control over the
+host Docker daemon, so the security boundary is not the same as an ordinary
+isolated application container.
+
 ## Local Test Fixture
 
 The `test/` directory contains a sample config and local Docker Compose fixture.
@@ -238,7 +247,7 @@ Example:
 
 ```sh
 make -f ./test/Makefile dev-up
-GITHUB_TOKEN=your_token_here LOG_FORMAT=text go run . -config ./test/sample.config.json
+GITHUB_TOKEN=your_token_here LOG_FORMAT=text go run . -config ./test/sample.config.yaml
 ```
 
 The sample deploy command calls:
