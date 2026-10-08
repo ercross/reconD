@@ -13,36 +13,92 @@ import (
 )
 
 type Config struct {
+	// Workloads is the required list of container workloads reconD should watch
+	// and reconcile. Configure one entry for each independently deployed
+	// service.
 	Workloads []Workload `yaml:"workloads"`
 }
 
+// Workload is a standalone unit of deployment (e.g., a container) reconD can watch and reconcile
 type Workload struct {
-	Name            string      `yaml:"name"`
-	Environment     string      `yaml:"environment"`
-	ContainerName   string      `yaml:"container_name"`
-	NotificationURL string      `yaml:"notification_url"`
-	DeployCommand   string      `yaml:"deploy_command"`
-	CheckInterval   Duration    `yaml:"check_interval"`
-	StateDir        string      `yaml:"state_dir"`
-	GitProvider     GitProvider `yaml:"git_provider"`
-	HealthCheck     HealthCheck `yaml:"health_check"`
-	Strategy        Strategy    `yaml:"strategy"`
+	// Name is required and identifies this workload in logs, notifications, and
+	// persisted deployment state.
+	Name string `yaml:"name"`
 
-	// Labels optionally scope docker image pruning to this workload's images.
+	// Environment is required and names the deployment environment, such as
+	// "prod" or "staging". It is passed to deploy commands as
+	// WORKLOAD_ENVIRONMENT and stored with deployment state.
+	Environment string `yaml:"environment"`
+
+	// ContainerName is required and must match the Docker container reconD
+	// inspects to determine the workload's current runtime state.
+	ContainerName string `yaml:"container_name"`
+
+	// NotificationURL is optional. When set, reconD sends deployment events to
+	// this Slack webhook URL; when empty, notifications are disabled.
+	NotificationURL string `yaml:"notification_url"`
+
+	// DeployCommand is required. reconD runs it with /bin/sh after applying the
+	// deployment strategy, passing workload and image metadata in WORKLOAD_*
+	// environment variables.
+	DeployCommand string `yaml:"deploy_command"`
+
+	// CheckInterval is optional and controls how often reconD checks for new
+	// deployment metadata. Values may be Go duration strings like "60s" or a
+	// number of seconds; values below 10s default to 60s.
+	CheckInterval Duration `yaml:"check_interval"`
+
+	// StateDir is required and points to the local directory where reconD stores
+	// deployed and rollback state for this workload.
+	StateDir string `yaml:"state_dir"`
+
+	// GitProvider is required and tells reconD which repository to read
+	// deployment metadata from.
+	GitProvider GitProvider `yaml:"git_provider"`
+
+	// HealthCheck is optional. When configured, reconD waits for the workload to
+	// become healthy after deploy and rollback commands; a failed check triggers
+	// rollback when previous state is available.
+	HealthCheck HealthCheck `yaml:"health_check"`
+
+	// Strategy is optional. Use it when deployment metadata must be written
+	// somewhere before DeployCommand runs, such as updating an env file with the
+	// image tag.
+	Strategy Strategy `yaml:"strategy"`
+
+	// Labels is optional and scopes Docker image pruning to images with these
+	// labels after a successful deployment.
 	Labels map[string]string `yaml:"labels"`
 }
 
 type GitProvider struct {
+	// Owner is required and names the GitHub owner or organization containing
+	// the deployment metadata repository.
 	Owner string `yaml:"owner"`
-	Repo  string `yaml:"repo"`
-	// Token is optional; set via GITHUB_TOKEN env var for private repos.
+
+	// Repo is required and names the GitHub repository containing deployment
+	// metadata for this workload.
+	Repo string `yaml:"repo"`
+
+	// Token is optional and is used to authenticate GitHub API requests for
+	// private repositories. If omitted, reconD reads GITHUB_TOKEN from the
+	// process environment.
 	Token string `yaml:"token"`
 }
 
 type Strategy struct {
-	Type        StrategyType `yaml:"type"`
-	EnvFilePath string       `yaml:"env_file_path"`
-	ImageTagKey string       `yaml:"image_tag_key"`
+	// Type is optional. Leave it empty or set it to "none" to run no strategy;
+	// set it to "env_file" to write deployment metadata into an env file before
+	// DeployCommand runs.
+	Type StrategyType `yaml:"type"`
+
+	// EnvFilePath is required when Type is "env_file" and ignored otherwise. It
+	// points to the env file reconD should create or update.
+	EnvFilePath string `yaml:"env_file_path"`
+
+	// ImageTagKey is optional for the "env_file" strategy and defaults to
+	// "IMAGE_TAG". It is the key reconD writes with the selected image tag.
+	ImageTagKey string `yaml:"image_tag_key"`
 }
 
 type StrategyType string
@@ -53,11 +109,25 @@ const (
 )
 
 type HealthCheck struct {
-	Type     HealthCheckType `yaml:"type"`
-	URL      string          `yaml:"url"`
-	Retries  int             `yaml:"retries"`
-	Interval Duration        `yaml:"interval"`
-	Timeout  Duration        `yaml:"timeout"`
+	// Type is optional. Leave it empty or set it to "none" to skip health
+	// checks; set it to "http" or "tcp" to poll URL after deployment.
+	Type HealthCheckType `yaml:"type"`
+
+	// URL is required when Type is "http" or "tcp" and ignored otherwise. Use
+	// an HTTP URL for HTTP checks or a tcp://host:port URL for TCP checks.
+	URL string `yaml:"url"`
+
+	// Retries is optional and defaults to 12. It controls how many health check
+	// attempts reconD makes before treating the deployment as unhealthy.
+	Retries int `yaml:"retries"`
+
+	// Interval is optional and defaults to 10s. It controls how long reconD waits
+	// between health check attempts.
+	Interval Duration `yaml:"interval"`
+
+	// Timeout is optional and defaults to 5s. It controls the per-attempt timeout
+	// for HTTP requests and TCP connections.
+	Timeout Duration `yaml:"timeout"`
 }
 
 type HealthCheckType string
