@@ -2,7 +2,6 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,36 +13,36 @@ import (
 )
 
 type Config struct {
-	Workloads []Workload `json:"workloads" yaml:"workloads"`
+	Workloads []Workload `yaml:"workloads"`
 }
 
 type Workload struct {
-	Name            string      `json:"name" yaml:"name"`
-	Environment     string      `json:"environment" yaml:"environment"`
-	ContainerName   string      `json:"container_name" yaml:"container_name"`
-	NotificationURL string      `json:"notification_url" yaml:"notification_url"`
-	DeployCommand   string      `json:"deploy_command" yaml:"deploy_command"`
-	CheckInterval   Duration    `json:"check_interval" yaml:"check_interval"`
-	StateDir        string      `json:"state_dir" yaml:"state_dir"`
-	GitProvider     GitProvider `json:"git_provider" yaml:"git_provider"`
-	HealthCheck     HealthCheck `json:"health_check" yaml:"health_check"`
-	Strategy        Strategy    `json:"strategy" yaml:"strategy"`
+	Name            string      `yaml:"name"`
+	Environment     string      `yaml:"environment"`
+	ContainerName   string      `yaml:"container_name"`
+	NotificationURL string      `yaml:"notification_url"`
+	DeployCommand   string      `yaml:"deploy_command"`
+	CheckInterval   Duration    `yaml:"check_interval"`
+	StateDir        string      `yaml:"state_dir"`
+	GitProvider     GitProvider `yaml:"git_provider"`
+	HealthCheck     HealthCheck `yaml:"health_check"`
+	Strategy        Strategy    `yaml:"strategy"`
 
 	// Labels optionally scope docker image pruning to this workload's images.
-	Labels map[string]string `json:"labels" yaml:"labels"`
+	Labels map[string]string `yaml:"labels"`
 }
 
 type GitProvider struct {
-	Owner string `json:"owner" yaml:"owner"`
-	Repo  string `json:"repo" yaml:"repo"`
+	Owner string `yaml:"owner"`
+	Repo  string `yaml:"repo"`
 	// Token is optional; set via GITHUB_TOKEN env var for private repos.
-	Token string `json:"token" yaml:"token"`
+	Token string `yaml:"token"`
 }
 
 type Strategy struct {
-	Type        StrategyType `json:"type" yaml:"type"`
-	EnvFilePath string       `json:"env_file_path" yaml:"env_file_path"`
-	ImageTagKey string       `json:"image_tag_key" yaml:"image_tag_key"`
+	Type        StrategyType `yaml:"type"`
+	EnvFilePath string       `yaml:"env_file_path"`
+	ImageTagKey string       `yaml:"image_tag_key"`
 }
 
 type StrategyType string
@@ -54,11 +53,11 @@ const (
 )
 
 type HealthCheck struct {
-	Type     HealthCheckType `json:"type" yaml:"type"`
-	URL      string          `json:"url" yaml:"url"`
-	Retries  int             `json:"retries" yaml:"retries"`
-	Interval Duration        `json:"interval" yaml:"interval"`
-	Timeout  Duration        `json:"timeout" yaml:"timeout"`
+	Type     HealthCheckType `yaml:"type"`
+	URL      string          `yaml:"url"`
+	Retries  int             `yaml:"retries"`
+	Interval Duration        `yaml:"interval"`
+	Timeout  Duration        `yaml:"timeout"`
 }
 
 type HealthCheckType string
@@ -98,15 +97,6 @@ func parseConfig(path string, raw []byte) (*Config, error) {
 	if err := unmarshalConfig(path, raw, &cfg); err != nil {
 		return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
 	}
-	if len(cfg.Workloads) == 0 {
-		var workload Workload
-		if err := unmarshalConfig(path, raw, &workload); err != nil {
-			return nil, fmt.Errorf("error parsing config file %q: %w", path, err)
-		}
-		if workload.Name != "" {
-			cfg.Workloads = []Workload{workload}
-		}
-	}
 
 	return &cfg, nil
 }
@@ -116,7 +106,7 @@ func unmarshalConfig(path string, raw []byte, v any) error {
 	case ".yaml", ".yml":
 		return yaml.Unmarshal(raw, v)
 	default:
-		return json.Unmarshal(raw, v)
+		return fmt.Errorf("unsupported config file extension %q; only .yaml and .yml are supported", filepath.Ext(path))
 	}
 }
 
@@ -217,24 +207,15 @@ func (s Strategy) validate() error {
 	return nil
 }
 
-func (d *Duration) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		return d.setString(s)
-	}
-	var seconds int64
-	if err := json.Unmarshal(data, &seconds); err != nil {
-		return err
-	}
-	d.Duration = time.Duration(seconds) * time.Second
-	return nil
-}
-
 func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
-	var s string
-	if err := value.Decode(&s); err == nil {
+	if value.ShortTag() == "!!str" {
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
 		return d.setString(s)
 	}
+
 	var seconds int64
 	if err := value.Decode(&seconds); err != nil {
 		return err

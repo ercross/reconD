@@ -28,7 +28,7 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "", "path to agent config file")
+	configPath := flag.String("config", "/etc/reconD/config.yaml", "path to agent config file")
 	flag.Parse()
 	if *configPath == "" {
 		return fmt.Errorf("missing config path")
@@ -47,7 +47,6 @@ func run() error {
 
 	var wg sync.WaitGroup
 	for _, workload := range cfg.Workloads {
-		workload := workload
 
 		stateMgr, err := state.NewManagerWithLocalFileSystem(workload.StateDir)
 		if err != nil {
@@ -67,11 +66,9 @@ func run() error {
 			log,
 		)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r.StartPeriodicReconciliation(ctx)
-		}()
+		})
 	}
 
 	<-ctx.Done()
