@@ -22,7 +22,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "agent error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -34,13 +34,13 @@ func run() error {
 		return fmt.Errorf("missing config path")
 	}
 
-	log := logger.Setup()
-	log.Info("deployment agent starting", "config", *configPath)
-
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("load config error %q: %w", *configPath, err)
 	}
+
+	log := logger.Setup(cfg.Log)
+	log.Info("deployment agent starting", "config", *configPath)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

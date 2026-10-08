@@ -13,10 +13,23 @@ import (
 )
 
 type Config struct {
+	// Log is optional and controls reconD's process-level logging output.
+	Log Log `yaml:"log"`
+
 	// Workloads is the required list of container workloads reconD should watch
 	// and reconcile. Configure one entry for each independently deployed
 	// service.
 	Workloads []Workload `yaml:"workloads"`
+}
+
+type Log struct {
+	// Format is optional and controls the log handler format. Set it to "text"
+	// for local development; any other value uses structured JSON output.
+	Format string `yaml:"format"`
+
+	// Level is optional and controls the minimum log level. Supported values are
+	// "debug", "info", "warn", and "error"; empty defaults to "info".
+	Level string `yaml:"level"`
 }
 
 // Workload is a standalone unit of deployment (e.g., a container) reconD can watch and reconcile
