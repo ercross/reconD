@@ -39,6 +39,9 @@ func TestLoadWorkloadListYAML(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "workloads.yml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+log:
+  format: text
+  level: debug
 workloads:
   - name: api
     release_prefix: api-prod
@@ -64,6 +67,8 @@ workloads:
 
 	cfg, err := Load(path)
 	require.NoError(t, err)
+	require.Equal(t, "text", cfg.Log.Format)
+	require.Equal(t, "debug", cfg.Log.Level)
 	require.Len(t, cfg.Workloads, 2)
 	require.Equal(t, "api", cfg.Workloads[0].Name)
 	require.Equal(t, "api-prod", cfg.Workloads[0].ReleasePrefix)

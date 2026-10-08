@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.0 - 2026-10-08
+
+### Breaking Changes
+
+- Logging configuration now lives in the config file under top-level `log` settings instead of `LOG_FORMAT` and `LOG_LEVEL` environment variables.
+
+  ```yaml
+  log:
+    format: text
+    level: debug
+  ```
+
+### Changed
+
+- `logger.Setup` now receives `config.Log`, keeping logger configuration with the rest of the application config.
+
 ## v0.3.0 - 2026-10-08
 
 ### Breaking Changes

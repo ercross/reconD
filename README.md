@@ -217,13 +217,13 @@ Run the agent:
 GITHUB_TOKEN=your_token_here go run . -config your-config.yaml
 ```
 
-Logging is JSON by default.
+Logging is JSON at `info` level by default. Configure logging in your config
+file when you want a different format or level:
 
-Optional logging environment variables:
-
-```sh
-LOG_FORMAT=text
-LOG_LEVEL=debug
+```yaml
+log:
+  format: text
+  level: debug
 ```
 
 ## Operating Model
@@ -254,7 +254,7 @@ Example:
 
 ```sh
 make -f ./test/Makefile dev-up
-GITHUB_TOKEN=your_token_here LOG_FORMAT=text go run . -config ./test/sample.config.yaml
+GITHUB_TOKEN=your_token_here go run . -config ./test/sample.config.yaml
 ```
 
 The sample deploy command calls:
@@ -280,6 +280,8 @@ Required workload fields:
 
 Common optional fields:
 
+- `log.format`: log output format. Set to `text` for local development; JSON is the default.
+- `log.level`: minimum log level. Supports `debug`, `info`, `warn`, and `error`; defaults to `info`.
 - `release_prefix`: release tag prefix used to scope metadata lookup. Recommended when a repository publishes more than one deployable artifact stream.
 - `notification_url`: Slack webhook URL.
 - `check_interval`: defaults to `60s` when below `10s`.
