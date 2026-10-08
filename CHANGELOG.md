@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.1 - 2026-10-08
+
+### Changed
+
+- Deployment state is now managed centrally in one deployments state file for all workloads, keyed by workload name.
+- Added the `-state` flag to configure the deployments state file path. It defaults to `/var/lib/reconD/deployments_state.json`.
+- Workload-level `state_dir` is no longer required and is no longer used.
+- Duplicate workload names are now rejected, since workload name is the deployment state key.
+- Missing state errors now distinguish between a missing state file and missing deployment state.
+
+### Upgrade Notes
+
+- This is not treated as a breaking config change: existing YAML files that still include `state_dir` continue to load, but `state_dir` is ignored.
+- Existing per-workload `deployed.json` and `previous.json` files are not automatically migrated into the new central state file. Operators should migrate state manually or expect the first run with the new state file to behave like no deployment state has been recorded yet.
+
 ## v0.4.0 - 2026-10-08
 
 ### Breaking Changes

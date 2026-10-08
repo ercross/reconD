@@ -102,7 +102,6 @@ workloads:
     container_name: my-container
     deploy_command: make redeploy-app
     check_interval: 60s
-    state_dir: /path/to/state/dir
     git_provider:
       owner: my-account
       repo: app-repo
@@ -171,12 +170,13 @@ health_check:
 
 ## State Files
 
-State is stored under each workload's `state_dir`.
+State for all workloads is stored in one deployments state file. Set it with
+the `-state` flag; it defaults to `/var/lib/reconD/deployments_state.json`.
 
-Files:
+File:
 
-- `deployed.json`: the current successful deployment.
-- `previous.json`: the previous successful deployment, used for rollback.
+- `deployments_state.json`: the current and previous successful deployment for
+  each workload, identified by workload name.
 
 The state includes workload name, image, image tag, manifest digest, git SHA,
 deployment time, and rollback information when applicable.
@@ -273,7 +273,6 @@ Required workload fields:
 - `name`
 - `container_name`
 - `deploy_command`
-- `state_dir`
 - `git_provider.owner`
 - `git_provider.repo`
 - `strategy.type`

@@ -147,11 +147,11 @@ func (d *dockerDeployer) Deploy(ctx context.Context, workload config.Workload, m
 		"git_sha", meta.GitSHA,
 	)
 
-	previousState, err := stateMgr.LoadDeployed()
-	if err != nil && !errors.Is(err, state.ErrFileNotFound) {
+	previousState, err := stateMgr.LoadDeployed(workload.Name)
+	if err != nil && !state.IsNotFound(err) {
 		d.logger.Warn("could not load previous state", "error", err)
 	}
-	noPreviousState := errors.Is(err, state.ErrFileNotFound)
+	noPreviousState := state.IsNotFound(err)
 
 	d.notifier.NotifyOnNewDeploymentStarted(workload.Name, meta)
 
@@ -202,14 +202,14 @@ func (d *dockerDeployer) deploy(ctx context.Context, workload config.Workload, m
 	}
 
 	newState = state.DeploymentState{
-		Workload:       workload.Name,
+		WorkloadName:   workload.Name,
 		Image:          meta.Image,
 		ImageTag:       meta.ImageTag,
 		ManifestDigest: meta.ManifestDigest,
 		GitSHA:         meta.GitSHA,
 		DeployedAt:     time.Now().UTC(),
 	}
-	if err := stateMgr.CommitDeployed(newState); err != nil {
+	if err := stateMgr.CommitDeployed(workload.Name, newState); err != nil {
 		d.logger.Error("failed to commit deployment state", "phase", logger.PhaseCommit, "error", err)
 	}
 
@@ -252,7 +252,7 @@ func (d *dockerDeployer) rollback(ctx context.Context, stateMgr state.Manager, w
 	}
 
 	rollbackState = state.DeploymentState{
-		Workload:       workload.Name,
+		WorkloadName:   workload.Name,
 		Image:          previousState.Image,
 		ImageTag:       previousState.ImageTag,
 		ManifestDigest: previousState.ManifestDigest,
@@ -260,7 +260,7 @@ func (d *dockerDeployer) rollback(ctx context.Context, stateMgr state.Manager, w
 		DeployedAt:     time.Now().UTC(),
 		RollbackFrom:   failedDigest,
 	}
-	if err := stateMgr.CommitRollback(rollbackState); err != nil {
+	if err := stateMgr.CommitRollback(workload.Name, rollbackState); err != nil {
 		d.logger.Error("failed to commit rollback state", "phase", logger.PhaseRollback, "error", err)
 	}
 	return rollbackState, nil

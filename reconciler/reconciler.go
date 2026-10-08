@@ -83,8 +83,8 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		return
 	}
 
-	currentState, err := r.stateMgr.LoadDeployed()
-	if err != nil && !errors.Is(err, state.ErrFileNotFound) {
+	currentState, err := r.stateMgr.LoadDeployed(r.workload.Name)
+	if err != nil && !state.IsNotFound(err) {
 		r.log.Error("failed to load deployed state",
 			"phase", logger.PhaseDrift,
 			"error", err,
