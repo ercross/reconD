@@ -25,7 +25,7 @@ var (
 )
 
 var errorsThatCanTriggerRollback = []error{
-	errImagePullFailed, errDeployCommandFailed, errHealthCheckFailed,
+	errImagePullFailed, errDeploymentStrategyFailed, errDeployCommandFailed, errHealthCheckFailed,
 }
 
 // RuntimeState is the reconciler's view of the currently running workload.

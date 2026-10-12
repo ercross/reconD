@@ -25,6 +25,15 @@ type Reconciler struct {
 	log          *slog.Logger
 }
 
+type terminalFailureStatus int
+
+const (
+	terminalFailureUnknown terminalFailureStatus = iota
+	terminalFailureNotFound
+	terminalFailureFound
+	terminalFailureStale
+)
+
 func New(
 	workload config.Workload,
 	gitProvider git_provider.GitProvider,
@@ -92,6 +101,15 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		return
 	}
 
+	terminalFailure, err := r.terminalFailureStatus(desiredState)
+	if err != nil {
+		r.log.Error("failed to load terminal failure state",
+			"phase", logger.PhaseDrift,
+			"error", err,
+		)
+		return
+	}
+
 	hasDrift, driftReason, err := r.hasDrift(ctx, currentState, desiredState)
 	if err != nil {
 		r.log.Error("failed to observe runtime state",
@@ -101,10 +119,28 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		return
 	}
 	if !hasDrift {
+		if terminalFailure != terminalFailureNotFound {
+			if err = r.stateMgr.ClearTerminalFailure(r.workload.Name); err != nil {
+				r.log.Error("failed to clear terminal failure for already deployed desired state",
+					"phase", logger.PhaseCommit,
+					"error", err,
+				)
+				return
+			}
+		}
 		r.log.Debug("no drift detected",
 			"phase", logger.PhaseNoop,
 			"digest", desiredState.ManifestDigest,
 			"duration_ms", time.Since(start).Milliseconds(),
+		)
+		return
+	}
+
+	if terminalFailure == terminalFailureFound {
+		r.log.Warn("automatic deployment skipped after retry exhaustion",
+			"phase", logger.PhaseDrift,
+			"digest", desiredState.ManifestDigest,
+			"workload", r.workload.Name,
 		)
 		return
 	}
@@ -122,10 +158,37 @@ func (r *Reconciler) reconcileOnce(ctx context.Context) {
 		return
 	}
 
+	if terminalFailure == terminalFailureStale {
+		if err := r.stateMgr.ClearTerminalFailure(r.workload.Name); err != nil {
+			r.log.Error("failed to clear stale terminal failure after successful deployment",
+				"phase", logger.PhaseCommit,
+				"error", err,
+			)
+			return
+		}
+	}
+
 	r.log.Info("reconcile cycle completed successfully",
 		"digest", desiredState.ManifestDigest,
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
+}
+
+func (r *Reconciler) terminalFailureStatus(desired git_provider.DeploymentMetadata) (terminalFailureStatus, error) {
+	failure, err := r.stateMgr.LoadTerminalFailure(r.workload.Name)
+	if err != nil {
+		if !state.IsNotFound(err) {
+			return terminalFailureUnknown, fmt.Errorf("failed to load terminal failure status: %w", err)
+
+		}
+		return terminalFailureNotFound, nil
+	}
+
+	if failure.ManifestDigest == desired.ManifestDigest {
+		return terminalFailureFound, nil
+	}
+
+	return terminalFailureStale, nil
 }
 
 func (r *Reconciler) fetchDesiredState(ctx context.Context) (git_provider.DeploymentMetadata, error) {
@@ -149,7 +212,7 @@ func (r *Reconciler) validateDesiredState(meta git_provider.DeploymentMetadata) 
 	return nil
 }
 
-func (r *Reconciler) hasDrift(ctx context.Context, actual state.DeploymentState, desired git_provider.DeploymentMetadata) (bool, string, error) {
+func (r *Reconciler) hasDrift(ctx context.Context, actual state.DeploymentSnapshot, desired git_provider.DeploymentMetadata) (bool, string, error) {
 	if actual.ManifestDigest == "" {
 		return true, "no current deployment state", nil
 	}

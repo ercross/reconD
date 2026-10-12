@@ -65,8 +65,8 @@ func (sl *Slack) NotifyOnDeploymentFailed(workloadName string, meta git_provider
 	}
 }
 
-func (sl *Slack) NotifyOnDeploymentSuccess(dep state.DeploymentState) {
-	msg := slackNotificationFromDeploymentState(dep, deploymentStateSuccess)
+func (sl *Slack) NotifyOnDeploymentSuccess(workloadName string, dep state.DeploymentSnapshot) {
+	msg := slackNotificationFromDeploymentState(workloadName, dep, deploymentStateSuccess)
 	err := sl.send(msg)
 	if err != nil {
 		sl.log.Error("Failed to send slack notification", "error", err)
@@ -85,10 +85,10 @@ func slackNotificationFromDeploymentMeta(workloadName string, meta git_provider.
 	}
 }
 
-func slackNotificationFromDeploymentState(depState state.DeploymentState, st deploymentState) slackNotification {
+func slackNotificationFromDeploymentState(workloadName string, depState state.DeploymentSnapshot, st deploymentState) slackNotification {
 	return slackNotification{
 		State:          st,
-		Workload:       depState.WorkloadName,
+		Workload:       workloadName,
 		Image:          depState.Image,
 		ImageTag:       depState.ImageTag,
 		ManifestDigest: depState.ManifestDigest,
