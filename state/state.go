@@ -16,10 +16,13 @@ import (
 )
 
 type Manager interface {
-	LoadDeployed(deploymentName string) (DeploymentState, error)
-	LoadPrevious(deploymentName string) (DeploymentState, error)
-	CommitDeployed(deploymentName string, s DeploymentState) error
-	CommitRollback(deploymentName string, s DeploymentState) error
+	LoadDeployed(deploymentName string) (DeploymentSnapshot, error)
+	LoadPrevious(deploymentName string) (DeploymentSnapshot, error)
+	LoadTerminalFailure(deploymentName string) (TerminalFailureState, error)
+	CommitDeployed(deploymentName string, s DeploymentSnapshot) error
+	CommitRollback(deploymentName string, s DeploymentSnapshot) error
+	CommitTerminalFailure(deploymentName string, s TerminalFailureState) error
+	ClearTerminalFailure(deploymentName string) error
 }
 
 var (
@@ -31,17 +34,16 @@ func IsNotFound(err error) bool {
 	return errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrDeploymentStateNotFound)
 }
 
-// DeploymentStateNew represents the current and previous deployment for one workload.
-type DeploymentStateNew struct {
-	WorkloadName string          `json:"workload_name" yaml:"workload_name"`
-	Current      DeploymentState `json:"current" yaml:"current"`
-	Previous     DeploymentState `json:"previous" yaml:"previous"`
+// DeploymentState represents the current and previous deployment for one workload.
+type DeploymentState struct {
+	WorkloadName    string                `json:"workload_name" yaml:"workload_name"`
+	Current         DeploymentSnapshot    `json:"current" yaml:"current"`
+	Previous        DeploymentSnapshot    `json:"previous" yaml:"previous"`
+	TerminalFailure *TerminalFailureState `json:"terminal_failure,omitempty" yaml:"terminal_failure,omitempty"`
 }
 
-// DeploymentState represents a point-in-time snapshot of what is deployed.
-type DeploymentState struct {
-	WorkloadName string `json:"workload_name"`
-
+// DeploymentSnapshot represents a point-in-time snapshot of what is deployed.
+type DeploymentSnapshot struct {
 	// Image is the full image reference that is deployed.
 	Image string `json:"image"`
 
@@ -61,4 +63,15 @@ type DeploymentState struct {
 	// RollbackFrom is set when this state was restored by a rollback.
 	// It contains the digest that failed, for audit purposes.
 	RollbackFrom string `json:"rollback_from,omitempty"`
+}
+
+// TerminalFailureState blocks automatic retries for a desired deployment that
+// exhausted its forward deployment retry budget.
+type TerminalFailureState struct {
+	ManifestDigest            string    `json:"manifest_digest"`
+	GitSHA                    string    `json:"git_sha,omitempty"`
+	ForwardDeploymentAttempts int       `json:"forward_deployment_attempts"`
+	RollbackAttempts          int       `json:"rollback_attempts,omitempty"`
+	Reason                    string    `json:"reason"`
+	FailedAt                  time.Time `json:"failed_at"`
 }

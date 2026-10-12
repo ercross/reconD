@@ -13,7 +13,7 @@ import (
 type Notifier interface {
 	NotifyOnNewDeploymentStarted(workloadName string, meta git_provider.DeploymentMetadata)
 	NotifyOnDeploymentFailed(workloadName string, meta git_provider.DeploymentMetadata, err error)
-	NotifyOnDeploymentSuccess(dep state.DeploymentState)
+	NotifyOnDeploymentSuccess(workloadName string, dep state.DeploymentSnapshot)
 }
 
 type Noop struct{}
@@ -21,4 +21,4 @@ type Noop struct{}
 func (Noop) NotifyOnNewDeploymentStarted(workloadName string, meta git_provider.DeploymentMetadata) {}
 func (Noop) NotifyOnDeploymentFailed(workloadName string, meta git_provider.DeploymentMetadata, err error) {
 }
-func (Noop) NotifyOnDeploymentSuccess(dep state.DeploymentState) {}
+func (Noop) NotifyOnDeploymentSuccess(workloadName string, dep state.DeploymentSnapshot) {}

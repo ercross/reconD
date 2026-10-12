@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.4.2 - 2026-10-12
+
+### Added
+
+- Added `deployment_retry` configuration for bounded forward deployment and rollback attempts.
+- Added top-level `deployment_retry` defaults that apply to every workload.
+- Added workload-level `deployment_retry` overrides; workload settings override only the fields they explicitly set.
+- Added exponential retry backoff with jitter for deployment strategy, deploy command, health-check, and rollback failures.
+- Added persisted terminal failure state for deployment digests that exhaust forward retry attempts, preventing repeated automatic deployment loops.
+
+### Changed
+
+- Forward deployment attempts default to `1`, preserving previous single-attempt behavior unless retry settings are configured.
+- Rollback attempts default to `1`, with retry delay defaults of `1s` initial interval, `30s` max interval, and multiplier `2`.
+- Rollback now starts only after forward deployment attempts are exhausted.
+- Reconciliation now skips automatic deployment when a terminal failure matches the desired manifest digest.
+- Reconciliation allows deployment of a newer desired manifest digest when an existing terminal failure belongs to an older digest.
+- Successful forward deployment commits now clear terminal failure state for the workload.
+- Successful rollback after forward retry exhaustion now persists terminal failure for the failed desired digest, preventing the next reconciliation cycle from retrying the same known-bad digest automatically.
+- Deployment state types were clarified: `DeploymentState` is the outer per-workload record, while `DeploymentSnapshot` is the current or previous deployed snapshot.
+- Slack success notifications now receive workload name separately from the deployment snapshot.
+
+### Fixed
+
+- Context cancellation during deployment retry backoff and rollback retry backoff now stops retries promptly.
+- Unexpected previous-state load errors now abort deployment instead of attempting rollback with an empty previous snapshot.
+- Unexpected terminal-failure load errors now abort reconciliation instead of treating terminal failure state as absent.
+- Terminal failure records for deployments with no previous state now record zero rollback attempts because no rollback was attempted.
+- Rollback commits no longer clear terminal failure state, so a failed desired digest remains blocked even after rollback restores the previous known-good deployment.
+- Commit failures during deployment or rollback now surface as deployment errors instead of being reported as successful deployments.
+- Backoff delay calculation now clamps safely before duration conversion and caps jittered delays to the configured max interval.
+
+### Upgrade Notes
+
+- Existing central state files remain compatible with the new state layout. Terminal failure state is stored as an optional `terminal_failure` field and is omitted when absent.
+- `DeploymentSnapshot` and `TerminalFailureState` no longer carry `workload_name`; the outer `DeploymentState.workload_name` identifies the workload.
+
 ## v0.4.1 - 2026-10-08
 
 ### Changed

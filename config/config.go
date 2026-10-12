@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,10 @@ import (
 type Config struct {
 	// Log is optional and controls reconD's process-level logging output.
 	Log Log `yaml:"log"`
+
+	// DeploymentRetry is optional and provides default retry behavior for every
+	// workload in this config. Workload-level deployment_retry fields override it.
+	DeploymentRetry DeploymentRetry `yaml:"deployment_retry"`
 
 	// Workloads is the required list of container workloads reconD should watch
 	// and reconcile. Configure one entry for each independently deployed
@@ -77,6 +82,10 @@ type Workload struct {
 	// image tag.
 	Strategy Strategy `yaml:"strategy"`
 
+	// DeploymentRetry bounds automatic deployment and rollback attempts for one
+	// desired deployment identity.
+	DeploymentRetry DeploymentRetry `yaml:"deployment_retry"`
+
 	// Labels is optional and scopes Docker image pruning to images with these
 	// labels after a successful deployment.
 	Labels map[string]string `yaml:"labels"`
@@ -110,6 +119,25 @@ type Strategy struct {
 	// ImageTagKey is optional for the "env_file" strategy and defaults to
 	// "IMAGE_TAG". It is the key reconD writes with the selected image tag.
 	ImageTagKey string `yaml:"image_tag_key"`
+}
+
+type DeploymentRetry struct {
+	// MaxRetryForwardDeployment is the total number of forward deployment
+	// attempts before rollback is considered. Defaults to 1.
+	MaxRetryForwardDeployment int `yaml:"max_retry_forward_deployment"`
+
+	// MaxRetryRollback is the total number of rollback attempts before the
+	// desired deployment is marked terminally failed. Defaults to 1.
+	MaxRetryRollback int `yaml:"max_retry_rollback"`
+
+	// InitialInterval is the first delay before retrying. Defaults to 1s.
+	InitialInterval Duration `yaml:"initial_interval"`
+
+	// MaxInterval caps exponential backoff delays. Defaults to 30s.
+	MaxInterval Duration `yaml:"max_interval"`
+
+	// Multiplier controls exponential backoff growth. Defaults to 2.
+	Multiplier float64 `yaml:"multiplier"`
 }
 
 type StrategyType string
@@ -165,7 +193,9 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	cfg.DeploymentRetry.fillDefaultOnZeroValues()
 	for i := range cfg.Workloads {
+		cfg.Workloads[i].DeploymentRetry = mergeDeploymentRetry(cfg.DeploymentRetry, cfg.Workloads[i].DeploymentRetry)
 		cfg.Workloads[i].fillDefaultOnZeroValues()
 	}
 
@@ -212,11 +242,67 @@ func (w *Workload) fillDefaultOnZeroValues() {
 	if w.Strategy.Type == StrategyEnvFile && w.Strategy.ImageTagKey == "" {
 		w.Strategy.ImageTagKey = "IMAGE_TAG"
 	}
+	if w.DeploymentRetry.MaxRetryForwardDeployment == 0 {
+		w.DeploymentRetry.MaxRetryForwardDeployment = 1
+	}
+	if w.DeploymentRetry.MaxRetryRollback == 0 {
+		w.DeploymentRetry.MaxRetryRollback = 1
+	}
+	if w.DeploymentRetry.InitialInterval.Duration == 0 {
+		w.DeploymentRetry.InitialInterval.Duration = time.Second
+	}
+	if w.DeploymentRetry.MaxInterval.Duration == 0 {
+		w.DeploymentRetry.MaxInterval.Duration = 30 * time.Second
+	}
+	if w.DeploymentRetry.Multiplier == 0 {
+		w.DeploymentRetry.Multiplier = 2
+	}
+}
+
+func (r *DeploymentRetry) fillDefaultOnZeroValues() {
+	if r.MaxRetryForwardDeployment == 0 {
+		r.MaxRetryForwardDeployment = 1
+	}
+	if r.MaxRetryRollback == 0 {
+		r.MaxRetryRollback = 1
+	}
+	if r.InitialInterval.Duration == 0 {
+		r.InitialInterval.Duration = time.Second
+	}
+	if r.MaxInterval.Duration == 0 {
+		r.MaxInterval.Duration = 30 * time.Second
+	}
+	if r.Multiplier == 0 {
+		r.Multiplier = 2
+	}
+}
+
+func mergeDeploymentRetry(defaults, override DeploymentRetry) DeploymentRetry {
+	merged := defaults
+	if override.MaxRetryForwardDeployment != 0 {
+		merged.MaxRetryForwardDeployment = override.MaxRetryForwardDeployment
+	}
+	if override.MaxRetryRollback != 0 {
+		merged.MaxRetryRollback = override.MaxRetryRollback
+	}
+	if override.InitialInterval.Duration != 0 {
+		merged.InitialInterval = override.InitialInterval
+	}
+	if override.MaxInterval.Duration != 0 {
+		merged.MaxInterval = override.MaxInterval
+	}
+	if override.Multiplier != 0 {
+		merged.Multiplier = override.Multiplier
+	}
+	return merged
 }
 
 func (cfg Config) validate() error {
 	if len(cfg.Workloads) == 0 {
 		return fmt.Errorf("at least one workload must be configured")
+	}
+	if err := cfg.DeploymentRetry.validate(); err != nil {
+		return err
 	}
 
 	workloadNames := make(map[string]struct{}, len(cfg.Workloads))
@@ -251,7 +337,10 @@ func (w Workload) validate() error {
 	if err := w.HealthCheck.validate(); err != nil {
 		return err
 	}
-	return w.Strategy.validate()
+	if err := w.Strategy.validate(); err != nil {
+		return err
+	}
+	return w.DeploymentRetry.validate()
 }
 
 func (h HealthCheck) validate() error {
@@ -283,6 +372,28 @@ func (s Strategy) validate() error {
 		}
 	default:
 		return fmt.Errorf("unsupported strategy.type %q", s.Type)
+	}
+	return nil
+}
+
+func (r DeploymentRetry) validate() error {
+	if r.MaxRetryForwardDeployment < 1 {
+		return errors.New("deployment_retry.max_retry_forward_deployment must be at least 1")
+	}
+	if r.MaxRetryRollback < 1 {
+		return errors.New("deployment_retry.max_retry_rollback must be at least 1")
+	}
+	if r.InitialInterval.Duration <= 0 {
+		return errors.New("deployment_retry.initial_interval must be greater than 0")
+	}
+	if r.MaxInterval.Duration <= 0 {
+		return errors.New("deployment_retry.max_interval must be greater than 0")
+	}
+	if r.MaxInterval.Duration < r.InitialInterval.Duration {
+		return errors.New("deployment_retry.max_interval must be greater than or equal to initial_interval")
+	}
+	if math.IsNaN(r.Multiplier) || math.IsInf(r.Multiplier, 0) || r.Multiplier < 1 {
+		return errors.New("deployment_retry.multiplier must be a finite number at least 1")
 	}
 	return nil
 }

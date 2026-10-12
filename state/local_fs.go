@@ -7,10 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type deploymentsStateFile struct {
-	Deployments []DeploymentStateNew `json:"deployments"`
+	Deployments []DeploymentState `json:"deployments"`
 }
 
 // managerWithLocalFileSystem handles reading and writing deployment state for all workloads.
@@ -32,9 +33,9 @@ func NewManagerWithLocalFileSystem(path string) (Manager, error) {
 }
 
 // LoadDeployed returns the currently deployed state for deploymentName.
-func (m *managerWithLocalFileSystem) LoadDeployed(deploymentName string) (DeploymentState, error) {
+func (m *managerWithLocalFileSystem) LoadDeployed(deploymentName string) (DeploymentSnapshot, error) {
 	if deploymentName == "" {
-		return DeploymentState{}, fmt.Errorf("deployment name is required")
+		return DeploymentSnapshot{}, fmt.Errorf("deployment name is required")
 	}
 
 	m.mu.Lock()
@@ -42,18 +43,18 @@ func (m *managerWithLocalFileSystem) LoadDeployed(deploymentName string) (Deploy
 
 	record, err := m.loadDeployment(deploymentName)
 	if err != nil {
-		return DeploymentState{}, err
+		return DeploymentSnapshot{}, err
 	}
-	if isZeroDeploymentState(record.Current) {
-		return DeploymentState{}, ErrDeploymentStateNotFound
+	if isZeroDeploymentSnapshot(record.Current) {
+		return DeploymentSnapshot{}, ErrDeploymentStateNotFound
 	}
 	return record.Current, nil
 }
 
 // LoadPrevious returns the previous deployment state for deploymentName.
-func (m *managerWithLocalFileSystem) LoadPrevious(deploymentName string) (DeploymentState, error) {
+func (m *managerWithLocalFileSystem) LoadPrevious(deploymentName string) (DeploymentSnapshot, error) {
 	if deploymentName == "" {
-		return DeploymentState{}, fmt.Errorf("deployment name is required")
+		return DeploymentSnapshot{}, fmt.Errorf("deployment name is required")
 	}
 
 	m.mu.Lock()
@@ -61,17 +62,35 @@ func (m *managerWithLocalFileSystem) LoadPrevious(deploymentName string) (Deploy
 
 	record, err := m.loadDeployment(deploymentName)
 	if err != nil {
-		return DeploymentState{}, err
+		return DeploymentSnapshot{}, err
 	}
-	if isZeroDeploymentState(record.Previous) {
-		return DeploymentState{}, ErrDeploymentStateNotFound
+	if isZeroDeploymentSnapshot(record.Previous) {
+		return DeploymentSnapshot{}, ErrDeploymentStateNotFound
 	}
 	return record.Previous, nil
 }
 
+func (m *managerWithLocalFileSystem) LoadTerminalFailure(deploymentName string) (TerminalFailureState, error) {
+	if deploymentName == "" {
+		return TerminalFailureState{}, fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	record, err := m.loadDeployment(deploymentName)
+	if err != nil {
+		return TerminalFailureState{}, err
+	}
+	if record.TerminalFailure == nil || *record.TerminalFailure == (TerminalFailureState{}) {
+		return TerminalFailureState{}, ErrDeploymentStateNotFound
+	}
+	return *record.TerminalFailure, nil
+}
+
 // CommitDeployed atomically persists s as the current deployed state for deploymentName.
 // The current state, if any, is promoted to previous first.
-func (m *managerWithLocalFileSystem) CommitDeployed(deploymentName string, s DeploymentState) error {
+func (m *managerWithLocalFileSystem) CommitDeployed(deploymentName string, s DeploymentSnapshot) error {
 	if deploymentName == "" {
 		return fmt.Errorf("deployment name is required")
 	}
@@ -85,18 +104,20 @@ func (m *managerWithLocalFileSystem) CommitDeployed(deploymentName string, s Dep
 	}
 
 	record := upsertDeployment(&fileState, deploymentName)
-	if !isZeroDeploymentState(record.Current) {
+	if !isZeroDeploymentSnapshot(record.Current) {
 		record.Previous = record.Current
 	}
-	s.WorkloadName = deploymentName
 	record.Current = s
+	record.TerminalFailure = nil
 
 	return m.writeAtomic(fileState)
 }
 
 // CommitRollback persists s as the current deployed state after a rollback.
-// It does not update Previous, preserving the last known-good rollback target.
-func (m *managerWithLocalFileSystem) CommitRollback(deploymentName string, s DeploymentState) error {
+// It does not update Previous or clear TerminalFailure, preserving the last
+// known-good rollback target and any terminal marker for the failed desired
+// deployment.
+func (m *managerWithLocalFileSystem) CommitRollback(deploymentName string, s DeploymentSnapshot) error {
 	if deploymentName == "" {
 		return fmt.Errorf("deployment name is required")
 	}
@@ -110,16 +131,59 @@ func (m *managerWithLocalFileSystem) CommitRollback(deploymentName string, s Dep
 	}
 
 	record := upsertDeployment(&fileState, deploymentName)
-	s.WorkloadName = deploymentName
 	record.Current = s
 
 	return m.writeAtomic(fileState)
 }
 
-func (m *managerWithLocalFileSystem) loadDeployment(deploymentName string) (DeploymentStateNew, error) {
+func (m *managerWithLocalFileSystem) CommitTerminalFailure(deploymentName string, s TerminalFailureState) error {
+	if deploymentName == "" {
+		return fmt.Errorf("deployment name is required")
+	}
+	if s.ManifestDigest == "" {
+		return fmt.Errorf("terminal failure manifest digest is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	fileState, err := m.loadAll()
+	if err != nil && !errors.Is(err, ErrFileNotFound) {
+		return err
+	}
+
+	record := upsertDeployment(&fileState, deploymentName)
+	if s.FailedAt.IsZero() {
+		s.FailedAt = time.Now().UTC()
+	}
+	record.TerminalFailure = &s
+
+	return m.writeAtomic(fileState)
+}
+
+func (m *managerWithLocalFileSystem) ClearTerminalFailure(deploymentName string) error {
+	if deploymentName == "" {
+		return fmt.Errorf("deployment name is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fileState, err := m.loadAll()
 	if err != nil {
-		return DeploymentStateNew{}, err
+		return err
+	}
+
+	record := upsertDeployment(&fileState, deploymentName)
+	record.TerminalFailure = nil
+
+	return m.writeAtomic(fileState)
+}
+
+func (m *managerWithLocalFileSystem) loadDeployment(deploymentName string) (DeploymentState, error) {
+	fileState, err := m.loadAll()
+	if err != nil {
+		return DeploymentState{}, err
 	}
 
 	for _, deployment := range fileState.Deployments {
@@ -127,7 +191,7 @@ func (m *managerWithLocalFileSystem) loadDeployment(deploymentName string) (Depl
 			return deployment, nil
 		}
 	}
-	return DeploymentStateNew{}, ErrDeploymentStateNotFound
+	return DeploymentState{}, ErrDeploymentStateNotFound
 }
 
 func (m *managerWithLocalFileSystem) loadAll() (deploymentsStateFile, error) {
@@ -171,19 +235,19 @@ func (m *managerWithLocalFileSystem) writeAtomic(fileState deploymentsStateFile)
 	return nil
 }
 
-func upsertDeployment(fileState *deploymentsStateFile, deploymentName string) *DeploymentStateNew {
+func upsertDeployment(fileState *deploymentsStateFile, deploymentName string) *DeploymentState {
 	for i := range fileState.Deployments {
 		if fileState.Deployments[i].WorkloadName == deploymentName {
 			return &fileState.Deployments[i]
 		}
 	}
 
-	fileState.Deployments = append(fileState.Deployments, DeploymentStateNew{
+	fileState.Deployments = append(fileState.Deployments, DeploymentState{
 		WorkloadName: deploymentName,
 	})
 	return &fileState.Deployments[len(fileState.Deployments)-1]
 }
 
-func isZeroDeploymentState(s DeploymentState) bool {
-	return s == DeploymentState{}
+func isZeroDeploymentSnapshot(s DeploymentSnapshot) bool {
+	return s == DeploymentSnapshot{}
 }

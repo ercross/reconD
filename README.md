@@ -96,6 +96,13 @@ contains one workload.
 Minimal example:
 
 ```yaml
+deployment_retry:
+  max_retry_forward_deployment: 3
+  max_retry_rollback: 2
+  initial_interval: 1s
+  max_interval: 30s
+  multiplier: 2
+
 workloads:
   - name: my-app
     release_prefix: my-app-prod
@@ -167,6 +174,36 @@ health_check:
   interval: 10s
   timeout: 5s
 ```
+
+## Deployment Retries
+
+By default, `reconD` keeps the original single-attempt behavior:
+
+```yaml
+deployment_retry:
+  max_retry_forward_deployment: 1
+  max_retry_rollback: 1
+  initial_interval: 1s
+  max_interval: 30s
+  multiplier: 2
+```
+
+Increase `max_retry_forward_deployment` to retry transient strategy,
+`deploy_command`, or health-check failures before rollback. Rollback starts only
+after the forward deployment attempts are exhausted. Increase
+`max_retry_rollback` to retry rollback failures. Retry waits use exponential
+backoff with jitter and stop promptly when the agent context is canceled.
+
+Set `deployment_retry` at the top level to define defaults for every workload in
+the config. A workload can include its own `deployment_retry` section to
+override only the fields that differ from the top-level defaults.
+
+If forward deployment attempts are exhausted, `reconD` persists a terminal
+failure for that workload and manifest digest in the central state file. When a
+previous deployment exists, rollback still runs to recover the workload, but a
+successful rollback does not make the failed desired digest eligible for
+automatic retry. Future reconciliation cycles skip that same digest until the
+terminal failure is cleared from state. A newer desired digest is not blocked.
 
 ## State Files
 
@@ -288,6 +325,11 @@ Common optional fields:
 - `health_check.interval`: defaults to `10s`.
 - `health_check.timeout`: defaults to `5s`.
 - `labels`: labels used to scope Docker image pruning.
+- `deployment_retry.max_retry_forward_deployment`: total forward deployment attempts before rollback; defaults to `1`.
+- `deployment_retry.max_retry_rollback`: total rollback recovery attempts after forward deployment is exhausted; defaults to `1`.
+- `deployment_retry.initial_interval`: first retry backoff delay; defaults to `1s`.
+- `deployment_retry.max_interval`: maximum retry backoff delay; defaults to `30s`.
+- `deployment_retry.multiplier`: exponential backoff multiplier; defaults to `2`.
 
 ## Design Rule
 

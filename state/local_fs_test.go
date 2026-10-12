@@ -17,7 +17,7 @@ func TestLocalFileSystemManagerCommitDeployedWritesFirstDeployment(t *testing.T)
 	manager, err := NewManagerWithLocalFileSystem(stateFile)
 	require.NoError(t, err)
 
-	expected := DeploymentState{
+	expected := DeploymentSnapshot{
 		Image:          "ghcr.io/example/app:v1.0.0",
 		ManifestDigest: "v1.0.0",
 		GitSHA:         "sha-v1.0.0",
@@ -28,7 +28,6 @@ func TestLocalFileSystemManagerCommitDeployedWritesFirstDeployment(t *testing.T)
 
 	actual, err := manager.LoadDeployed("api")
 	require.NoError(t, err)
-	require.Equal(t, "api", actual.WorkloadName)
 	require.Equal(t, expected.Image, actual.Image)
 	require.Equal(t, expected.ManifestDigest, actual.ManifestDigest)
 	require.Equal(t, expected.GitSHA, actual.GitSHA)
@@ -44,13 +43,13 @@ func TestLocalFileSystemManagerCommitDeployedPromotesPreviousDeployment(t *testi
 	manager, err := NewManagerWithLocalFileSystem(stateFile)
 	require.NoError(t, err)
 
-	first := DeploymentState{
+	first := DeploymentSnapshot{
 		Image:          "ghcr.io/example/app:v1.0.0",
 		ManifestDigest: "v1.0.0",
 		GitSHA:         "sha-v1.0.0",
 		DeployedAt:     time.Now().UTC(),
 	}
-	second := DeploymentState{
+	second := DeploymentSnapshot{
 		Image:          "ghcr.io/example/app:v1.1.0",
 		ManifestDigest: "v1.1.0",
 		GitSHA:         "sha-v1.1.0",
@@ -76,13 +75,13 @@ func TestLocalFileSystemManagerStoresMultipleDeploymentsInOneFile(t *testing.T) 
 	manager, err := NewManagerWithLocalFileSystem(stateFile)
 	require.NoError(t, err)
 
-	api := DeploymentState{
+	api := DeploymentSnapshot{
 		Image:          "ghcr.io/example/api:v1.0.0",
 		ManifestDigest: "api-v1.0.0",
 		GitSHA:         "api-sha",
 		DeployedAt:     time.Now().UTC(),
 	}
-	worker := DeploymentState{
+	worker := DeploymentSnapshot{
 		Image:          "ghcr.io/example/worker:v1.0.0",
 		ManifestDigest: "worker-v1.0.0",
 		GitSHA:         "worker-sha",
@@ -119,19 +118,19 @@ func TestLocalFileSystemManagerCommitRollbackPreservesPreviousDeployment(t *test
 	manager, err := NewManagerWithLocalFileSystem(stateFile)
 	require.NoError(t, err)
 
-	first := DeploymentState{
+	first := DeploymentSnapshot{
 		Image:          "ghcr.io/example/api:v1.0.0",
 		ManifestDigest: "api-v1.0.0",
 		GitSHA:         "api-sha-v1",
 		DeployedAt:     time.Now().UTC(),
 	}
-	second := DeploymentState{
+	second := DeploymentSnapshot{
 		Image:          "ghcr.io/example/api:v1.1.0",
 		ManifestDigest: "api-v1.1.0",
 		GitSHA:         "api-sha-v2",
 		DeployedAt:     time.Now().UTC(),
 	}
-	rollback := DeploymentState{
+	rollback := DeploymentSnapshot{
 		Image:          first.Image,
 		ManifestDigest: first.ManifestDigest,
 		GitSHA:         first.GitSHA,
@@ -153,6 +152,111 @@ func TestLocalFileSystemManagerCommitRollbackPreservesPreviousDeployment(t *test
 	require.Equal(t, first.ManifestDigest, previous.ManifestDigest)
 }
 
+func TestLocalFileSystemManagerCommitRollbackPreservesTerminalFailure(t *testing.T) {
+	t.Parallel()
+
+	stateFile := filepath.Join(t.TempDir(), "deployments_state.json")
+	manager, err := NewManagerWithLocalFileSystem(stateFile)
+	require.NoError(t, err)
+
+	first := DeploymentSnapshot{
+		Image:          "ghcr.io/example/api:v1.0.0",
+		ManifestDigest: "api-v1.0.0",
+		GitSHA:         "api-sha-v1",
+		DeployedAt:     time.Now().UTC(),
+	}
+	failure := TerminalFailureState{
+		ManifestDigest:            "api-v1.1.0",
+		ForwardDeploymentAttempts: 3,
+		RollbackAttempts:          1,
+		Reason:                    "deployment failed; rollback succeeded",
+	}
+
+	require.NoError(t, manager.CommitDeployed("api", first))
+	require.NoError(t, manager.CommitTerminalFailure("api", failure))
+	require.NoError(t, manager.CommitRollback("api", DeploymentSnapshot{
+		Image:          first.Image,
+		ManifestDigest: first.ManifestDigest,
+		GitSHA:         first.GitSHA,
+		DeployedAt:     time.Now().UTC(),
+		RollbackFrom:   failure.ManifestDigest,
+	}))
+
+	actual, err := manager.LoadTerminalFailure("api")
+	require.NoError(t, err)
+	require.Equal(t, failure.ManifestDigest, actual.ManifestDigest)
+	require.Equal(t, 1, actual.RollbackAttempts)
+}
+
+func TestLocalFileSystemManagerTerminalFailureLifecycle(t *testing.T) {
+	t.Parallel()
+
+	stateFile := filepath.Join(t.TempDir(), "deployments_state.json")
+	manager, err := NewManagerWithLocalFileSystem(stateFile)
+	require.NoError(t, err)
+
+	failure := TerminalFailureState{
+		ManifestDigest:            "sha256:failed",
+		GitSHA:                    "failed-sha",
+		ForwardDeploymentAttempts: 3,
+		RollbackAttempts:          2,
+		Reason:                    "rollback failed",
+	}
+
+	require.NoError(t, manager.CommitTerminalFailure("api", failure))
+
+	actual, err := manager.LoadTerminalFailure("api")
+	require.NoError(t, err)
+	require.Equal(t, failure.ManifestDigest, actual.ManifestDigest)
+	require.Equal(t, 3, actual.ForwardDeploymentAttempts)
+	require.False(t, actual.FailedAt.IsZero())
+
+	require.NoError(t, manager.ClearTerminalFailure("api"))
+	_, err = manager.LoadTerminalFailure("api")
+	require.ErrorIs(t, err, ErrDeploymentStateNotFound)
+}
+
+func TestLocalFileSystemManagerOmitsAbsentTerminalFailure(t *testing.T) {
+	t.Parallel()
+
+	stateFile := filepath.Join(t.TempDir(), "deployments_state.json")
+	manager, err := NewManagerWithLocalFileSystem(stateFile)
+	require.NoError(t, err)
+
+	require.NoError(t, manager.CommitDeployed("api", DeploymentSnapshot{
+		Image:          "ghcr.io/example/api:v1.0.0",
+		ManifestDigest: "sha256:ok",
+		GitSHA:         "ok-sha",
+		DeployedAt:     time.Now().UTC(),
+	}))
+
+	raw, err := os.ReadFile(stateFile)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "terminal_failure")
+}
+
+func TestLocalFileSystemManagerCommitDeployedClearsTerminalFailure(t *testing.T) {
+	t.Parallel()
+
+	stateFile := filepath.Join(t.TempDir(), "deployments_state.json")
+	manager, err := NewManagerWithLocalFileSystem(stateFile)
+	require.NoError(t, err)
+
+	require.NoError(t, manager.CommitTerminalFailure("api", TerminalFailureState{
+		ManifestDigest: "sha256:failed",
+		Reason:         "failed",
+	}))
+	require.NoError(t, manager.CommitDeployed("api", DeploymentSnapshot{
+		Image:          "ghcr.io/example/api:v1.0.0",
+		ManifestDigest: "sha256:ok",
+		GitSHA:         "ok-sha",
+		DeployedAt:     time.Now().UTC(),
+	}))
+
+	_, err = manager.LoadTerminalFailure("api")
+	require.ErrorIs(t, err, ErrDeploymentStateNotFound)
+}
+
 func TestLocalFileSystemManagerLoadDeployedMissingFile(t *testing.T) {
 	t.Parallel()
 
@@ -172,7 +276,7 @@ func TestLocalFileSystemManagerLoadDeployedMissingDeployment(t *testing.T) {
 	manager, err := NewManagerWithLocalFileSystem(stateFile)
 	require.NoError(t, err)
 
-	require.NoError(t, manager.CommitDeployed("api", DeploymentState{
+	require.NoError(t, manager.CommitDeployed("api", DeploymentSnapshot{
 		Image:          "ghcr.io/example/api:v1.0.0",
 		ManifestDigest: "api-v1.0.0",
 		GitSHA:         "api-sha",

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,6 +76,122 @@ workloads:
 	require.Equal(t, "worker", cfg.Workloads[1].Name)
 	require.Empty(t, cfg.Workloads[1].ReleasePrefix)
 	require.Equal(t, 2*time.Minute, cfg.Workloads[1].CheckInterval.Duration)
+}
+
+func TestLoadDeploymentRetryConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "workloads.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+workloads:
+  - name: api
+    container_name: api
+    deploy_command: docker restart api
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+    deployment_retry:
+      max_retry_forward_deployment: 3
+      max_retry_rollback: 2
+      initial_interval: 100ms
+      max_interval: 1s
+      multiplier: 1.5
+`), 0o600))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 3, cfg.Workloads[0].DeploymentRetry.MaxRetryForwardDeployment)
+	require.Equal(t, 2, cfg.Workloads[0].DeploymentRetry.MaxRetryRollback)
+	require.Equal(t, 100*time.Millisecond, cfg.Workloads[0].DeploymentRetry.InitialInterval.Duration)
+	require.Equal(t, time.Second, cfg.Workloads[0].DeploymentRetry.MaxInterval.Duration)
+	require.Equal(t, 1.5, cfg.Workloads[0].DeploymentRetry.Multiplier)
+}
+
+func TestLoadDefaultsDeploymentRetryConfig(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "workloads.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+workloads:
+  - name: api
+    container_name: api
+    deploy_command: docker restart api
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+`), 0o600))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Equal(t, 1, cfg.Workloads[0].DeploymentRetry.MaxRetryForwardDeployment)
+	require.Equal(t, 1, cfg.Workloads[0].DeploymentRetry.MaxRetryRollback)
+	require.Equal(t, time.Second, cfg.Workloads[0].DeploymentRetry.InitialInterval.Duration)
+	require.Equal(t, 30*time.Second, cfg.Workloads[0].DeploymentRetry.MaxInterval.Duration)
+	require.Equal(t, float64(2), cfg.Workloads[0].DeploymentRetry.Multiplier)
+}
+
+func TestLoadTopLevelDeploymentRetryDefaultsApplyToWorkloads(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "workloads.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+deployment_retry:
+  max_retry_forward_deployment: 4
+  max_retry_rollback: 3
+  initial_interval: 250ms
+  max_interval: 5s
+  multiplier: 1.25
+workloads:
+  - name: api
+    container_name: api
+    deploy_command: docker restart api
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+  - name: worker
+    container_name: worker
+    deploy_command: docker restart worker
+    git_provider:
+      owner: toughbred
+      repo: gymportal
+    deployment_retry:
+      max_retry_forward_deployment: 2
+      initial_interval: 100ms
+`), 0o600))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+
+	require.Equal(t, 4, cfg.DeploymentRetry.MaxRetryForwardDeployment)
+	require.Equal(t, 3, cfg.DeploymentRetry.MaxRetryRollback)
+	require.Equal(t, 250*time.Millisecond, cfg.DeploymentRetry.InitialInterval.Duration)
+	require.Equal(t, 5*time.Second, cfg.DeploymentRetry.MaxInterval.Duration)
+	require.Equal(t, 1.25, cfg.DeploymentRetry.Multiplier)
+
+	require.Equal(t, cfg.DeploymentRetry, cfg.Workloads[0].DeploymentRetry)
+	require.Equal(t, 2, cfg.Workloads[1].DeploymentRetry.MaxRetryForwardDeployment)
+	require.Equal(t, 3, cfg.Workloads[1].DeploymentRetry.MaxRetryRollback)
+	require.Equal(t, 100*time.Millisecond, cfg.Workloads[1].DeploymentRetry.InitialInterval.Duration)
+	require.Equal(t, 5*time.Second, cfg.Workloads[1].DeploymentRetry.MaxInterval.Duration)
+	require.Equal(t, 1.25, cfg.Workloads[1].DeploymentRetry.Multiplier)
+}
+
+func TestDeploymentRetryValidateRejectsNonFiniteMultiplier(t *testing.T) {
+	t.Parallel()
+
+	base := DeploymentRetry{
+		MaxRetryForwardDeployment: 1,
+		MaxRetryRollback:          1,
+		InitialInterval:           Duration{Duration: time.Second},
+		MaxInterval:               Duration{Duration: time.Second},
+		Multiplier:                2,
+	}
+
+	for _, multiplier := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		retry := base
+		retry.Multiplier = multiplier
+		require.ErrorContains(t, retry.validate(), "finite number")
+	}
 }
 
 func TestLoadRejectsDuplicateWorkloadName(t *testing.T) {
