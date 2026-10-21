@@ -58,6 +58,224 @@ topology behind that command.
 If a feature requires understanding application topology, dependency ordering,
 networking, routing, or workload composition, it belongs outside the agent.
 
+## Installation
+
+`reconD` is published as `.deb` and `.rpm` packages on
+[GitHub Releases](https://github.com/ercross/reconD/releases). The package and
+the installed binary are both named `recond`.
+
+| Distribution family                     | Architecture       | Package file                       |
+| --------------------------------------- | ------------------ | ---------------------------------- |
+| Debian, Ubuntu                          | `amd64`            | `recond_<version>_amd64.deb`       |
+| Debian, Ubuntu                          | `arm64`            | `recond_<version>_arm64.deb`       |
+| Fedora, RHEL-compatible, openSUSE       | `x86_64`           | `recond-<version>-1.x86_64.rpm`    |
+| Fedora, RHEL-compatible, openSUSE       | `aarch64`          | `recond-<version>-1.aarch64.rpm`   |
+
+Each release also includes `checksums.txt` with SHA-256 checksums for every
+artifact.
+
+`reconD` needs the `docker` CLI and a running Docker daemon. The packages only
+recommend Docker, because its package name differs across distributions.
+Install Docker first, from your distribution or from
+[Docker's repositories](https://docs.docker.com/engine/install/), and check that
+`sudo docker version` reaches the daemon.
+
+If Docker is not installed, the package manager installs the recommendation
+itself and picks the package:
+
+- `apt` installs the distribution's `docker.io` package.
+- `dnf` installs whichever available package provides `/usr/bin/docker`.
+  RHEL-compatible distributions do not ship Docker, so there it installs
+  `podman-docker`, a Podman compatibility wrapper. `reconD` is not tested
+  against Podman. `podman-docker` also blocks a later Docker install, because
+  Docker's `docker-ce-cli` installs the same `/usr/bin/docker` file; run
+  `sudo dnf remove podman-docker` before installing Docker.
+- `zypper` installs openSUSE's `docker` package.
+
+To install `reconD` without the recommendation, add `--no-install-recommends`
+to `apt install`, `--setopt=install_weak_deps=False` to `dnf install`, or
+`--no-recommends` to `zypper install`.
+
+Docker installed as a snap (`snap install docker`) is not supported. `apt`
+does not see the snap, so it installs `docker.io` next to it, and the two
+daemons compete for `/var/run/docker.sock`. With `--no-install-recommends`
+instead, the service still cannot find `docker`, because systemd's `PATH`
+does not include `/snap/bin`. Remove the snap and install Docker from the
+distribution or from Docker's repositories.
+
+### Install on Debian or Ubuntu
+
+```sh
+VERSION=0.5.0
+ARCH=amd64   # or arm64
+curl -fsSLO "https://github.com/ercross/reconD/releases/download/v${VERSION}/recond_${VERSION}_${ARCH}.deb"
+curl -fsSLO "https://github.com/ercross/reconD/releases/download/v${VERSION}/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt
+sudo apt install "./recond_${VERSION}_${ARCH}.deb"
+```
+
+### Install on Fedora, RHEL-compatible, or openSUSE
+
+```sh
+VERSION=0.5.0
+ARCH=x86_64   # or aarch64
+curl -fsSLO "https://github.com/ercross/reconD/releases/download/v${VERSION}/recond-${VERSION}-1.${ARCH}.rpm"
+curl -fsSLO "https://github.com/ercross/reconD/releases/download/v${VERSION}/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt
+
+# Fedora / RHEL-compatible
+sudo dnf install "./recond-${VERSION}-1.${ARCH}.rpm"
+
+# openSUSE (packages are not signed yet)
+sudo zypper install --allow-unsigned-rpm "./recond-${VERSION}-1.${ARCH}.rpm"
+```
+
+Check the installed version:
+
+```sh
+recond -version
+```
+
+### Installed files
+
+| Path                                       | Purpose                                         |
+| ------------------------------------------ | ----------------------------------------------- |
+| `/usr/bin/recond`                          | Agent binary                                    |
+| `/usr/lib/systemd/system/recond.service`   | systemd unit                                    |
+| `/etc/recond/config.yaml.example`          | Example config shipped by the package           |
+| `/etc/recond/config.yaml`                  | Your config (you create this; never overwritten) |
+| `/var/lib/recond/deployments_state.json`   | Deployment state (created by the agent)         |
+| `/usr/share/doc/recond/copyright` (`.deb`), `/usr/share/licenses/recond/LICENSE` (`.rpm`) | License |
+
+### Configure
+
+The package does not enable or start the service on a fresh install. Create a
+config first:
+
+```sh
+sudo cp /etc/recond/config.yaml.example /etc/recond/config.yaml
+sudo chmod 600 /etc/recond/config.yaml
+sudoedit /etc/recond/config.yaml
+```
+
+Set `git_provider.token` in the config if the release metadata repository is
+private. Keep the file mode at `600`, because it then holds a credential. See
+[Configuration](#configuration) for every field.
+
+### Run the service
+
+```sh
+sudo systemctl enable --now recond   # start now and on boot
+sudo systemctl status recond
+sudo journalctl -u recond -f         # follow logs
+sudo systemctl stop recond
+sudo systemctl restart recond        # after editing the config
+sudo systemctl disable recond        # do not start on boot
+```
+
+Create `/etc/recond/config.yaml` before starting the service. If the config
+file is missing or invalid, `reconD` exits with an error and systemd restarts
+it every 5 seconds, indefinitely, logging the same `load config error` each
+time. To stop the loop, run `sudo systemctl stop recond`, fix the config, then
+start it again. `journalctl -u recond` shows the exact error.
+
+The service runs as `root`. `reconD` drives the host Docker daemon and runs
+your `deploy_command`, and access to the Docker daemon is equivalent to root
+access on the host, so a dedicated unprivileged user would not meaningfully
+reduce what the agent can do. Only put commands you trust in `deploy_command`,
+and keep `/etc/recond/config.yaml` writable by root only.
+
+Under the service, `deploy_command` runs from `/`, not from the directory you
+ran `reconD` from when testing by hand. `HOME` is `/root`. Use absolute paths in
+`deploy_command` and `strategy.env_file_path`, or start the command with `cd`,
+for example `cd /opt/my-app && make redeploy-app`. A relative `./deploy.sh`,
+`make` target, or Compose file would otherwise be looked up in `/`.
+
+### Upgrade
+
+Download the newer package and install it with the same command used for the
+first install:
+
+```sh
+sudo apt install "./recond_${VERSION}_${ARCH}.deb"                              # Debian / Ubuntu
+sudo dnf install "./recond-${VERSION}-1.${ARCH}.rpm"                            # Fedora / RHEL-compatible
+sudo zypper install --allow-unsigned-rpm "./recond-${VERSION}-1.${ARCH}.rpm"    # openSUSE
+```
+
+If the service is running, the package restarts it on the new binary. If it is
+stopped, it stays stopped, and whether it starts on boot does not change. Your
+config and state are left untouched.
+
+```sh
+recond -version
+sudo systemctl status recond
+```
+
+If the restart after an upgrade fails, check `journalctl -u recond`, fix the
+cause, and run `sudo systemctl restart recond`.
+
+To go back to an older version, download its package and install it as a
+downgrade. The service is restarted the same way as on an upgrade:
+
+```sh
+sudo apt install --allow-downgrades "./recond_${VERSION}_${ARCH}.deb"           # Debian / Ubuntu
+sudo dnf downgrade "./recond-${VERSION}-1.${ARCH}.rpm"                          # Fedora / RHEL-compatible
+sudo zypper install --oldpackage --allow-unsigned-rpm "./recond-${VERSION}-1.${ARCH}.rpm"  # openSUSE
+```
+
+### Uninstall
+
+```sh
+# Debian / Ubuntu
+sudo apt remove recond   # keeps your config and deployment state
+sudo apt purge recond    # removes everything, including /etc/recond and /var/lib/recond
+
+# Fedora / RHEL-compatible
+sudo dnf remove recond
+
+# openSUSE
+sudo zypper remove recond
+```
+
+Uninstalling stops and disables the service. On Debian and Ubuntu, `apt purge`
+also deletes `/etc/recond` (including your `config.yaml`) and `/var/lib/recond`
+(including deployment state); back them up first if you may reinstall later.
+`apt remove`, `dnf remove`, and `zypper remove` keep them.
+
+Reinstalling after an uninstall reuses the kept config and state, but the
+service stays disabled and stopped. Start it again with
+`sudo systemctl enable --now recond`.
+
+RPM has no purge, so remove the config and state yourself if you no longer
+need them:
+
+```sh
+sudo rm -rf /etc/recond /var/lib/recond
+```
+
+### Build from source
+
+Building from source remains supported for contributors and anyone who prefers
+manual installs. Unlike the packages, nothing is installed, created, or
+upgraded for you.
+
+```sh
+git clone https://github.com/ercross/reconD.git
+cd reconD
+go build -o recond .
+sudo install -m 0755 recond /usr/bin/recond
+sudo install -m 0644 packaging/systemd/recond.service /usr/lib/systemd/system/recond.service
+sudo systemctl daemon-reload
+```
+
+Then create `/etc/recond/config.yaml` as described under [Configure](#configure).
+To upgrade, pull, rebuild, reinstall the binary, and restart the service. A
+source build reports its version as `dev`.
+
+To build the release packages locally, install
+[GoReleaser](https://goreleaser.com) and run `make release-test`. Packages are
+written to `dist/`.
+
 ## Deployment Metadata
 
 The Git provider implementation fetches and unmarshals `deployment-metadata.json`
@@ -107,7 +325,7 @@ workloads:
   - name: my-app
     release_prefix: my-app-prod
     container_name: my-container
-    deploy_command: make redeploy-app
+    deploy_command: cd /opt/my-app && make redeploy-app
     check_interval: 60s
     git_provider:
       owner: my-account
@@ -208,7 +426,7 @@ terminal failure is cleared from state. A newer desired digest is not blocked.
 ## State Files
 
 State for all workloads is stored in one deployments state file. Set it with
-the `-state` flag; it defaults to `/var/lib/reconD/deployments_state.json`.
+the `-state` flag; it defaults to `/var/lib/recond/deployments_state.json`.
 
 File:
 
@@ -266,9 +484,8 @@ log:
 ## Operating Model
 
 For production use, `reconD` is best treated as a host-level service: install
-the binary on the host, run it under a process manager such as systemd, keep
-configuration under a host path such as `/etc/reconD`, and keep workload state
-under a persistent host path such as `/var/lib/reconD`.
+it from the [packages](#installation), which run it under systemd, keep
+configuration in `/etc/recond`, and keep workload state in `/var/lib/recond`.
 
 This matches the agent's job. It observes host container state, runs the local
 `docker` command, writes local deployment state, and executes the configured
@@ -309,7 +526,8 @@ Required workload fields:
 
 - `name`
 - `container_name`
-- `deploy_command`
+- `deploy_command`: run with `sh -c`. Under the packaged service it runs from
+  `/`; see [Run the service](#run-the-service).
 - `git_provider.owner`
 - `git_provider.repo`
 - `strategy.type`

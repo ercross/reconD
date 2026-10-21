@@ -3,3 +3,8 @@ test
 AGENTS.md
 todo.md
 .gocache
+dist/
+
+z.jotter
+/baseline/
+/install.log
