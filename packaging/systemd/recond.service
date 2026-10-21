@@ -1,0 +1,20 @@
+[Unit]
+Description=reconD reconciliation agent
+Documentation=https://github.com/ercross/reconD
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+# Runs as root: reconD drives the host Docker daemon and runs deploy_command,
+# and Docker access is equivalent to root access. Naming the user explicitly
+# makes systemd set HOME=/root, USER, LOGNAME, and SHELL for deploy_command.
+User=root
+ExecStart=/usr/bin/recond -config /etc/recond/config.yaml -state /var/lib/recond/deployments_state.json
+StateDirectory=recond
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

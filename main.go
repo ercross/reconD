@@ -21,8 +21,18 @@ import (
 )
 
 var (
-	defaultConfigFile           = "/etc/reconD/config.yaml"
-	defaultDeploymentsStateFile = "/var/lib/reconD/deployments_state.json"
+	defaultConfigFile           = "/etc/recond/config.yaml"
+	defaultDeploymentsStateFile = "/var/lib/recond/deployments_state.json"
+)
+
+// Overwritten at build time by GoReleaser via -ldflags -X.
+var (
+
+	// version of current build, set by GoReleaser.
+	// A local `go build` will print this default `dev`, tells a release build from a hand-built one.
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -35,7 +45,13 @@ func main() {
 func run() error {
 	configPath := flag.String("config", defaultConfigFile, "path to agent config file")
 	statePath := flag.String("state", defaultDeploymentsStateFile, "path to deployments state file")
+	showVersion := flag.Bool("version", false, "print version and exit")
+
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("recond %s (commit %s, built %s)\n", version, commit, date)
+		return nil
+	}
 	if *configPath == "" {
 		return fmt.Errorf("missing config path")
 	}

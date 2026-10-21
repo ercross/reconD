@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.5.0 - 2026-10-21
+
+### Breaking
+
+- Default config path changed from `/etc/reconD/config.yaml` to `/etc/recond/config.yaml`.
+- Default deployments state path changed from `/var/lib/reconD/deployments_state.json` to `/var/lib/recond/deployments_state.json`.
+
+Existing installations that rely on the default paths must migrate before running this version:
+
+- If the old default config path was used, the new version finds no `/etc/recond/config.yaml`, exits with `load config error`, and is restarted by systemd every 5 seconds.
+- If only `-config` was passed, the new version starts with an empty state file. Without the previous state, reconD has no rollback target and no recorded terminal failures, so a digest that was previously marked as failed can be deployed again.
+
+Stop and disable any reconD service currently running prior to this version, for example a hand-written `reconD.service`, so it does not start next to the packaged `recond.service` on the next boot. Two agents would reconcile the same workloads with separate state files. Then move the files:
+
+```sh
+sudo systemctl disable --now reconD   # the unit name you used before, if any
+sudo mkdir -p /etc/recond /var/lib/recond
+sudo mv /etc/reconD/config.yaml /etc/recond/config.yaml
+sudo mv /var/lib/reconD/deployments_state.json /var/lib/recond/deployments_state.json
+```
+
+To keep the old locations instead, override the packaged unit's command with `sudo systemctl edit recond`. The empty `ExecStart=` clears the packaged command before setting the new one:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/recond -config /etc/reconD/config.yaml -state /var/lib/reconD/deployments_state.json
+```
+
+With this override, package installs and upgrades still print setup directions, because `/etc/recond/config.yaml` does not exist.
+
+### Added
+
+- Official `.deb` and `.rpm` packages for `amd64`/`x86_64` and `arm64`/`aarch64`, published on GitHub Releases with `checksums.txt`. Tags with a prerelease suffix, such as `v0.5.0-rc.1`, are published as prereleases.
+- Packages install the `recond` binary to `/usr/bin/recond`, a `recond.service` systemd unit, `/etc/recond/config.yaml.example`, and `/var/lib/recond` (mode `0750`).
+- `-version` flag that prints the build version, commit, and date.
+- The packaged service runs `deploy_command` from `/` with `HOME=/root`. Use absolute paths or start the command with `cd`, for example `cd /opt/my-app && make redeploy-app`.
+- Package installs, upgrades, and reinstalls print setup directions until `/etc/recond/config.yaml` exists.
+- Packages ship the MIT license as `/usr/share/doc/recond/copyright` (`.deb`) and `/usr/share/licenses/recond/LICENSE` (`.rpm`).
+- `apt purge recond` deletes `/etc/recond` and `/var/lib/recond`, including config and deployment state. `apt remove`, `dnf remove`, and `zypper remove` keep them.
+- CI lints the package scripts, builds snapshot packages on every pull request, and tests the service lifecycle: `.deb` install, run, reinstall, remove, reinstall, purge, and upgrade of a running service on a systemd host, and `.rpm` install, run, reinstall, erase, and upgrade in Fedora containers with and without a running systemd. Upgrades start from the latest released package, or from a `v0.0.0` snapshot before the first packaged release.
+- Releases run the full CI workflow, including the package lifecycle tests, before publishing.
+
 ## v0.4.2 - 2026-10-12
 
 ### Added

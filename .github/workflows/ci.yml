@@ -5,6 +5,8 @@ on:
     branches:
       - master
   pull_request:
+  # Called by the release workflow, so every release passes the same checks.
+  workflow_call:
 
 permissions:
   contents: read
@@ -21,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -51,3 +53,251 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+  test-packaging:
+    name: Test Packaging
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        # An explicit shell adds -o pipefail, so `cmd | tee` fails when cmd does.
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Lint package scripts
+        run: shellcheck packaging/scripts/*.sh
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          install-only: true
+
+      - name: Check GoReleaser config
+        run: goreleaser check
+
+      - name: Get baseline packages for the upgrade tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The upgrade tests start from the latest published release, so the
+          # released package's prerm/postrm run against this build's postinst,
+          # as they do on an operator's host. Until a release ships packages,
+          # a v0.0.0 snapshot of this commit stands in.
+          mkdir baseline
+          if gh release download --repo "$GITHUB_REPOSITORY" --dir baseline \
+              --pattern 'recond_*_amd64.deb' --pattern 'recond-*.x86_64.rpm' \
+            && compgen -G 'baseline/recond_*_amd64.deb' >/dev/null \
+            && compgen -G 'baseline/recond-*.x86_64.rpm' >/dev/null; then
+            echo "Baseline: latest release"
+          else
+            echo "Baseline: v0.0.0 snapshot, because no release has packages yet"
+            rm -f baseline/*
+            GORELEASER_CURRENT_TAG=v0.0.0 goreleaser release --snapshot --clean
+            mv dist/recond_*_amd64.deb dist/recond-*.x86_64.rpm baseline/
+          fi
+          ls -l baseline
+
+      - name: Build snapshot packages
+        run: goreleaser release --snapshot --clean
+
+      - name: Install and smoke test the .deb package
+        run: |
+          sudo apt-get install -y ./dist/recond_*_amd64.deb | tee install.log
+          grep -q "reconD is installed but not running" install.log
+          test -x /usr/bin/recond
+          test -f /usr/lib/systemd/system/recond.service
+          test -f /etc/recond/config.yaml.example
+          test "$(stat -c %a /var/lib/recond)" = 750
+          test -f /usr/share/doc/recond/copyright
+          recond -version
+          # Must fail on the missing config, not on flag parsing.
+          if out="$(recond -config /nonexistent.yaml 2>&1)"; then
+            echo "expected recond to fail without a config file"; exit 1
+          fi
+          echo "$out"
+          echo "$out" | grep -q "load config error"
+
+      - name: Run and reinstall the .deb service
+        run: |
+          sudo cp /etc/recond/config.yaml.example /etc/recond/config.yaml
+          echo '{"deployments":[]}' | sudo tee /var/lib/recond/deployments_state.json >/dev/null
+          # The example config is valid, so the agent keeps running and only
+          # logs failed polls of its placeholder repository.
+          sudo systemctl enable --now recond
+          sleep 5
+          systemctl is-active --quiet recond
+          test "$(systemctl show -p NRestarts --value recond)" = 0
+          pid_before="$(systemctl show -p MainPID --value recond)"
+          # A reinstall runs `postinst configure <version>`, the upgrade path,
+          # which must restart the running service and keep it enabled.
+          sudo apt-get install -y --reinstall ./dist/recond_*_amd64.deb
+          sleep 5
+          systemctl is-active --quiet recond
+          systemctl is-enabled --quiet recond
+          pid_after="$(systemctl show -p MainPID --value recond)"
+          test "$pid_before" != "$pid_after"
+
+      - name: Remove the .deb package
+        run: |
+          sudo apt-get remove -y recond
+          if systemctl is-active --quiet recond; then
+            echo "recond is still active after remove"; exit 1
+          fi
+          test ! -e /etc/systemd/system/multi-user.target.wants/recond.service
+          test ! -e /usr/bin/recond
+          # remove keeps the administrator's config and state.
+          test -f /etc/recond/config.yaml
+          sudo test -f /var/lib/recond/deployments_state.json
+
+      - name: Reinstall the .deb package after remove
+        run: |
+          sudo apt-get install -y ./dist/recond_*_amd64.deb
+          # remove disabled the service; reinstalling must not enable or start it.
+          if systemctl is-active --quiet recond; then
+            echo "recond was started by a reinstall after remove"; exit 1
+          fi
+          test ! -e /etc/systemd/system/multi-user.target.wants/recond.service
+          test -f /etc/recond/config.yaml
+          sudo test -f /var/lib/recond/deployments_state.json
+
+      - name: Purge the .deb package
+        run: |
+          sudo apt-get purge -y recond
+          test ! -e /etc/recond
+          test ! -e /var/lib/recond
+
+      - name: Upgrade the running .deb service from the baseline
+        run: |
+          sudo apt-get install -y ./baseline/recond_*_amd64.deb
+          sudo cp /etc/recond/config.yaml.example /etc/recond/config.yaml
+          sudo systemctl enable --now recond
+          sleep 5
+          systemctl is-active --quiet recond
+          pid_before="$(systemctl show -p MainPID --value recond)"
+          # A branch based on a commit older than the latest release builds a
+          # lower snapshot version, so allow the downgrade. The transition still
+          # runs the baseline's prerm/postrm and this build's postinst.
+          sudo apt-get install -y --allow-downgrades ./dist/recond_*_amd64.deb
+          sleep 5
+          test "$(dpkg-query -W -f='${Version}' recond)" = "$(dpkg-deb -f ./dist/recond_*_amd64.deb Version)"
+          systemctl is-active --quiet recond
+          systemctl is-enabled --quiet recond
+          pid_after="$(systemctl show -p MainPID --value recond)"
+          test "$pid_before" != "$pid_after"
+          # The service runs the new binary, not the deleted old one.
+          test "$(sudo readlink "/proc/$pid_after/exe")" = /usr/bin/recond
+          sudo apt-get purge -y recond
+
+      - name: Build a Fedora image with systemd
+        run: |
+          docker build -t recond-fedora - <<'EOF'
+          FROM fedora:latest
+          RUN dnf install -y -q systemd && dnf clean all
+          EOF
+
+      - name: Install, reinstall, and erase the .rpm package without running systemd
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" recond-fedora bash -euo pipefail -c '
+            # systemd is installed but not running, as in image builds, so the
+            # hooks skip start/stop but still enable and disable the unit.
+            rpm -i /dist/recond-*.x86_64.rpm | tee /tmp/install.log
+            grep -q "reconD is installed but not running" /tmp/install.log
+            test -x /usr/bin/recond
+            test -f /usr/lib/systemd/system/recond.service
+            test -f /etc/recond/config.yaml.example
+            test "$(stat -c %a /var/lib/recond)" = 750
+            test -f /usr/share/licenses/recond/LICENSE
+            rpm -q --recommends recond | grep -qx /usr/bin/docker
+            recond -version
+
+            cp /etc/recond/config.yaml.example /etc/recond/config.yaml
+            echo "{\"deployments\":[]}" > /var/lib/recond/deployments_state.json
+            systemctl enable recond.service
+            # A reinstall runs %post with 2, the upgrade path, which must
+            # keep the service enabled.
+            rpm -U --replacepkgs /dist/recond-*.x86_64.rpm
+            systemctl is-enabled --quiet recond.service
+
+            rpm -e recond
+            test ! -e /etc/systemd/system/multi-user.target.wants/recond.service
+            test ! -e /usr/bin/recond
+            test ! -e /usr/share/licenses/recond
+            # Erase keeps the administrator config and state.
+            test -f /etc/recond/config.yaml
+            test -f /var/lib/recond/deployments_state.json
+          '
+
+      - name: Boot a Fedora container with systemd
+        run: |
+          docker run -d --name rpm-systemd --privileged --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$PWD/dist:/dist:ro" -v "$PWD/baseline:/baseline:ro" \
+            recond-fedora /sbin/init
+          timeout 90 bash -c 'until docker exec rpm-systemd systemctl is-system-running 2>/dev/null | grep -qE "^(running|degraded)$"; do sleep 1; done'
+
+      - name: Run, reinstall, erase, and upgrade the .rpm service under systemd
+        run: |
+          docker exec -i rpm-systemd bash -euo pipefail <<'EOF'
+          main_pid() { systemctl show -p MainPID --value recond; }
+
+          rpm -i /dist/recond-*.x86_64.rpm
+          cp /etc/recond/config.yaml.example /etc/recond/config.yaml
+          echo '{"deployments":[]}' > /var/lib/recond/deployments_state.json
+          systemctl enable --now recond
+          sleep 5
+          systemctl is-active --quiet recond
+          test "$(systemctl show -p NRestarts --value recond)" = 0
+          pid_before="$(main_pid)"
+          # %post 2: try-restart restarts the running service.
+          rpm -U --replacepkgs /dist/recond-*.x86_64.rpm
+          sleep 5
+          systemctl is-active --quiet recond
+          systemctl is-enabled --quiet recond
+          test "$pid_before" != "$(main_pid)"
+
+          # %preun 0: erase stops and disables the running service.
+          rpm -e recond
+          if systemctl is-active --quiet recond; then
+            echo "recond is still active after erase"; exit 1
+          fi
+          test ! -e /etc/systemd/system/multi-user.target.wants/recond.service
+          test -f /etc/recond/config.yaml
+          test -f /var/lib/recond/deployments_state.json
+
+          # The baseline's %preun/%postun run with 1 around this build's
+          # %post 2. --oldpackage for the same reason as the .deb upgrade test.
+          rpm -i /baseline/recond-*.x86_64.rpm
+          systemctl enable --now recond
+          sleep 5
+          systemctl is-active --quiet recond
+          pid_before="$(main_pid)"
+          rpm -U --oldpackage /dist/recond-*.x86_64.rpm
+          sleep 5
+          test "$(rpm -q --qf '%{VERSION}' recond)" = "$(rpm -qp --qf '%{VERSION}' /dist/recond-*.x86_64.rpm)"
+          systemctl is-active --quiet recond
+          systemctl is-enabled --quiet recond
+          pid_after="$(main_pid)"
+          test "$pid_before" != "$pid_after"
+          test "$(readlink "/proc/$pid_after/exe")" = /usr/bin/recond
+          rpm -e recond
+          EOF
+
+      - name: Show service logs
+        if: failure()
+        run: |
+          sudo journalctl -u recond --no-pager -n 200 || true
+          docker exec rpm-systemd journalctl -u recond --no-pager -n 200 || true

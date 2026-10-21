@@ -1,0 +1,115 @@
+version: 2
+
+project_name: recond
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: recond
+    main: .
+    binary: recond
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: recond
+    ids:
+      - recond
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}aarch64
+      {{- else }}{{ .Arch }}{{ end }}
+
+nfpms:
+  - id: recond
+    ids:
+      - recond
+    package_name: recond
+    # recond_<version>_amd64.deb and recond-<version>-1.x86_64.rpm
+    file_name_template: "{{ .ConventionalFileName }}"
+    vendor: reconD
+    homepage: https://github.com/ercross/reconD
+    maintainer: Ercross <odeyemi.t.e@gmail.com>
+    description: Small deployment reconciliation agent for single-host container workloads.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    section: utils
+    priority: optional
+    # Docker is required at runtime, but its package name differs across
+    # distributions and vendors, so it is a recommendation rather than a hard
+    # dependency.
+    overrides:
+      deb:
+        recommends:
+          - docker.io | docker-ce-cli
+      rpm:
+        recommends:
+          - /usr/bin/docker
+    contents:
+      - src: packaging/systemd/recond.service
+        dst: /usr/lib/systemd/system/recond.service
+      # A regular file, not a conffile: an example should always be replaced
+      # by the latest version, and must never trigger an upgrade prompt.
+      - src: packaging/config/config.yaml.example
+        dst: /etc/recond/config.yaml.example
+      - dst: /etc/recond
+        type: dir
+      # Matches StateDirectoryMode in recond.service. systemd does not change
+      # the mode of a state directory that already exists.
+      - dst: /var/lib/recond
+        type: dir
+        file_info:
+          mode: 0750
+      # Debian has no license control field; the license ships as the
+      # package's copyright file instead.
+      - src: LICENSE
+        dst: /usr/share/doc/recond/copyright
+        packager: deb
+      - dst: /usr/share/licenses/recond
+        type: dir
+        packager: rpm
+      - src: LICENSE
+        dst: /usr/share/licenses/recond/LICENSE
+        packager: rpm
+        type: license
+    scripts:
+      postinstall: packaging/scripts/postinstall.sh
+      preremove: packaging/scripts/preremove.sh
+      postremove: packaging/scripts/postremove.sh
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  # Tags such as v0.5.0-rc.1 are published as prereleases, not as the latest release.
+  prerelease: auto
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"

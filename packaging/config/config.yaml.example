@@ -1,0 +1,33 @@
+log:
+  format: text
+  level: info
+
+deployment_retry:
+  max_retry_forward_deployment: 1
+  max_retry_rollback: 1
+  initial_interval: 1s
+  max_interval: 30s
+  multiplier: 2
+
+workloads:
+  - name: my-app
+    release_prefix: my-app-prod
+    container_name: my-app
+    deploy_command: /opt/my-app/deploy.sh # deploy.sh must exist on this host at the path specified
+    check_interval: 60s
+    git_provider:
+      owner: my-github-owner
+      repo: my-deployment-metadata-repo
+      token: ""
+    strategy:
+      type: env_file
+      env_file_path: /opt/my-app/.env.deploy
+      image_tag_key: IMAGE_TAG
+    health_check:
+      type: http
+      url: http://localhost:8080/health
+      retries: 12
+      interval: 10s
+      timeout: 5s
+    labels:
+      app: my-app
