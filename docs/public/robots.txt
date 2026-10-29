@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ercross.github.io/reconD/sitemap.xml
